@@ -32,16 +32,18 @@ Current features:
 
 - Dashboard with headline metrics (net worth, available balance, expenses logged) and a daily runway table instead of a chart.
 - Currency selector on the dashboard that converts all displayed values to the chosen currency using fixed exchange rates.
-- Cash Flow screen with runway settings form and a daily runway table showing balance, safe target, and cumulative spend for each day.
-- Position, Investments, and Pensions screens with:
-  - Forms that accept a series name for every new snapshot.
-  - Update modals that let you pick from existing series names when editing.
-  - History tables showing all dated snapshots with currency conversion.
-- Budgets screen for monthly limits and safety progress.
+- Cash Flow screen with runway settings form, a daily runway table (day, date, balance, safe target, cumulative spend), plus named commitments and recurring bills that can be added, edited and deleted — matching the Apple app.
+- Position, Investments, and Pensions screens aligned with the Apple app's data model:
+  - Named accounts (institution, asset/liability, currency), holdings (symbol, type, units, unit price) and pension pots (provider, currency) stored as current records, each with Edit / Update / Delete controls.
+  - An Update action replaces the current value and records a dated snapshot under the same name, mirroring the Apple app's record-update helpers.
+  - Forms that accept a name for every new entry, with Update modals that let you pick from existing names and change the currency.
+  - History tables showing all dated snapshots with per-entry currency and converted display values.
 - Backup and restore using JSON export/import of the local IndexedDB database.
 - `manifest.json`, `sw.js`, and app icon assets under `pwa/assets/icons/`.
 
-For iPhone installation, serve the same folder over HTTPS from a trusted host, open it in Safari, tap Share, then choose **Add to Home Screen**. The manifest uses standalone display mode and portrait-primary orientation. No account, server, or network service is required after the app shell has been cached.
+For iPhone installation, serve the `pwa/` folder over HTTPS from a trusted host, open it in Safari, tap Share, then choose **Add to Home Screen**. The manifest uses standalone display mode and portrait-primary orientation.
+
+Both apps store data locally only (UserDefaults on Apple platforms, IndexedDB in the browser). No account, server, or network service is required after the app shell has been cached.
 
 ## Architecture
 

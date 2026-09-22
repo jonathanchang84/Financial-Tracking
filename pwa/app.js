@@ -2,8 +2,9 @@
   'use strict';
 
   const DB_NAME = 'financial-health-local';
-  const DB_VERSION = 1;
-  const stores = ['settings', 'transactions', 'budgets', 'accounts', 'snapshots'];
+  const DB_VERSION = 2;
+  // Aligned with the iOS AppDataStore: separate current items + dated histories.
+  const stores = ['settings', 'bills', 'commitments', 'netWorthEntries', 'netWorthHistory', 'holdings', 'portfolioHistory', 'pensions', 'pensionHistory', 'transactions', 'budgets', 'accounts', 'snapshots'];
   const currencies = { USD: 'US Dollar', EUR: 'Euro', GBP: 'British Pound', CAD: 'Canadian Dollar', AUD: 'Australian Dollar', JPY: 'Japanese Yen', CHF: 'Swiss Franc', CNY: 'Chinese Yuan', INR: 'Indian Rupee' };
   const state = { view: 'dashboard', theme: localStorage.getItem('fh-theme') || 'light', data: null };
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -34,7 +35,48 @@
   async function put(storeName, value) { const db = await openDB(); return new Promise((resolve, reject) => { const req = db.transaction(storeName, 'readwrite').objectStore(storeName).put(value); req.onsuccess = () => resolve(value); req.onerror = () => reject(req.error); }); }
   async function remove(storeName, valueId) { const db = await openDB(); return new Promise((resolve, reject) => { const req = db.transaction(storeName, 'readwrite').objectStore(storeName).delete(valueId); req.onsuccess = resolve; req.onerror = () => reject(req.error); }); }
   async function clearStore(storeName) { const db = await openDB(); return new Promise((resolve, reject) => { const req = db.transaction(storeName, 'readwrite').objectStore(storeName).clear(); req.onsuccess = resolve; req.onerror = () => reject(req.error); }); }
-  async function loadData() { const entries = await Promise.all(stores.map(async (store) => [store, await all(store)])); const result = Object.fromEntries(entries); result.settings = Object.fromEntries(result.settings.map((item) => [item.key, item.value])); return result; }
+  async function loadData() {
+    const entries = await Promise.all(stores.map(async (store) => [store, await all(store)]));
+    const result = Object.fromEntries(entries);
+    result.settings = Object.fromEntries(result.settings.map((item) => [item.key, item.value]));
+    // Migrate legacy web data into the iOS-aligned stores (lossless, one-way).
+    migrateLegacy(result);
+    return result;
+  }
+  function legacyCurrency(item) { return item.currencyCode || item.currency || 'USD'; }
+  function legacySeries(item, fallback) { return item.series || item.symbol || item.name || fallback; }
+  function migrateLegacy(data) {
+    const legacy = (data.snapshots || []).filter((s) => s && s.type);
+    if (legacy.length) {
+      legacy.forEach((s) => {
+        if (s.type === 'networth') {
+          if (!data.netWorthEntries.some((e) => (e.name || 'Account') === legacySeries(s, 'Account') && legacyCurrency(e) === legacyCurrency(s))) {
+            data.netWorthEntries.push({ id: id(), name: legacySeries(s, 'Account'), institution: '', kind: 'Asset', value: number(s.value), currencyCode: legacyCurrency(s) });
+          }
+          data.netWorthHistory.push({ id: s.id || id(), series: legacySeries(s, 'Account'), date: s.date || today(), value: number(s.value), currencyCode: legacyCurrency(s) });
+        } else if (s.type === 'portfolio') {
+          if (!data.holdings.some((h) => legacySeries(h, 'Fund') === legacySeries(s, 'Fund') && legacyCurrency(h) === legacyCurrency(s))) {
+            data.holdings.push({ id: id(), name: legacySeries(s, 'Fund'), symbol: legacySeries(s, 'Fund'), type: 'Fund', quantity: 1, price: number(s.value), currencyCode: legacyCurrency(s) });
+          }
+          data.portfolioHistory.push({ id: s.id || id(), series: legacySeries(s, 'Fund'), date: s.date || today(), value: number(s.value), currencyCode: legacyCurrency(s) });
+        } else if (s.type === 'pension') {
+          if (!data.pensions.some((p) => (p.name || 'Pension pot') === legacySeries(s, 'Pension pot') && legacyCurrency(p) === legacyCurrency(s))) {
+            data.pensions.push({ id: id(), name: legacySeries(s, 'Pension pot'), provider: '', value: number(s.value), currencyCode: legacyCurrency(s) });
+          }
+          data.pensionHistory.push({ id: s.id || id(), series: legacySeries(s, 'Pension pot'), date: s.date || today(), value: number(s.value), currencyCode: legacyCurrency(s) });
+        }
+      });
+    }
+    (data.transactions || []).filter((t) => t.type === 'expense').forEach((t) => {
+      if (!data.commitments.some((c) => c.id === t.id)) {
+        data.commitments.push({ id: t.id || id(), name: t.name || t.category || 'Commitment', date: t.date || today(), amount: number(t.amount), currencyCode: legacyCurrency(t) });
+      }
+    });
+    return data;
+  }
+  function currencyOf(item) { return item.currencyCode || item.currency || state.data?.settings?.balanceCurrency || 'USD'; }
+  function seriesNameOf(item) { return item.series || item.symbol || item.name || 'Item'; }
+  function escapeHtml(value) { return String(value ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c])); }
   async function saveSetting(key, value) { await put('settings', { id: key, key, value }); state.data.settings[key] = value; }
   async function saveRecord(store, record) {
     await put(store, record);
@@ -54,9 +96,11 @@
   function formData(form) { return Object.fromEntries(new FormData(form).entries()); }
   function showToast(message) { const toast = $('#toast'); toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); }
   function switchView(view) { state.view = view; $$('.view').forEach((section) => section.classList.toggle('active', section.dataset.view === view)); $$('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.nav === view)); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-  function openModal(title, content, onSubmit) { const root = $('#modal-root'); root.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="section-heading"><div><p class="eyebrow">LOCAL ENTRY</p><h3>${title}</h3></div><button class="text-button" data-close-modal>Close</button></div>${content}</section></div>`; $('[data-close-modal]', root).onclick = closeModal; $('.modal-backdrop', root).onclick = (event) => { if (event.target === event.currentTarget) closeModal(); }; const form = $('form', root); if (form) form.onsubmit = async (event) => { event.preventDefault(); await onSubmit(formData(form)); closeModal(); }; }
+  function syncModalClose(root) { $$('[data-close-modal]', root).forEach((b) => b.onclick = closeModal); }
+  function openModal(title, content, onSubmit) { const root = $('#modal-root'); root.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="section-heading"><div><p class="eyebrow">LOCAL ENTRY</p><h3>${title}</h3></div><button class="text-button" data-close-modal>Close</button></div>${content}</section></div>`; syncModalClose(root); $('.modal-backdrop', root).onclick = (event) => { if (event.target === event.currentTarget) closeModal(); }; const form = $('form', root); if (form) form.onsubmit = async (event) => { event.preventDefault(); const result = await onSubmit(formData(form)); if (result !== false) closeModal(); }; }
   function closeModal() { $('#modal-root').innerHTML = ''; }
   function currencyOptions(selected = 'USD') { return Object.entries(currencies).map(([code, name]) => `<option value="${code}" ${selected === code ? 'selected' : ''}>${code} · ${name}</option>`).join(''); }
+  const options = (selected = 'USD') => currencyOptions(selected);
   function dateInput(value = today()) { return `<input name="date" type="date" value="${value}" required>`; }
 
   function drawChart(canvas, series, colors) {
@@ -70,8 +114,21 @@
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted'); ctx.fillText(series[0].values[0]?.label || '', pad.left, height - 6); const last = series[0].values.at(-1); if (last) ctx.fillText(last.label || '', width - pad.right - 70, height - 6);
   }
 
-  function currentTotals() { const totals = {}; state.data.accounts.forEach((item) => { totals[item.currency] = (totals[item.currency] || 0) + (item.kind === 'liability' ? -number(item.value) : number(item.value)); }); return totals; }
-  function snapshotSeries(storeName, currency, key = null) { return state.data.snapshots.filter((item) => item.type === storeName && item.currency === currency && (!key || item.series === key)).sort((a, b) => a.date.localeCompare(b.date)); }
+  function currentTotals() {
+    const totals = {};
+    (state.data.netWorthEntries || []).forEach((item) => {
+      const cur = currencyOf(item);
+      const signed = (item.kind === 'liability' || item.kind === 'Liability') ? -number(item.value) : number(item.value);
+      totals[cur] = (totals[cur] || 0) + signed;
+    });
+    return totals;
+  }
+  // storeName is an iOS-aligned history store: netWorthHistory | portfolioHistory | pensionHistory
+  function snapshotSeries(storeName, currency, key = null) {
+    return (state.data[storeName] || [])
+      .filter((item) => currencyOf(item) === currency && (!key || seriesNameOf(item) === key))
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
   function monthGrowth(points) { if (points.length < 2 || !number(points.at(-2).value)) return 'Not enough data for month-on-month growth'; const change = ((number(points.at(-1).value) - number(points.at(-2).value)) / number(points.at(-2).value)) * 100; return `Latest change: ${change >= 0 ? '+' : ''}${change.toFixed(2)}% month-on-month`; }
   function projectedPoints(value, annualRate, months = 12) { return Array.from({ length: months + 1 }, (_, index) => { const date = new Date(); date.setMonth(date.getMonth() + index); return { label: date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }), value: number(value) * Math.pow(1 + number(annualRate), index / 12) }; }); }
   function monthlyDates(start, end) { const dates = []; const cursor = new Date(`${start}T12:00:00`); const finish = new Date(`${end}T12:00:00`); while (cursor <= finish) { dates.push(new Date(cursor)); cursor.setDate(cursor.getDate() + 1); } return dates; }
@@ -144,87 +201,148 @@
   }
 
   function renderCashflow() {
-    const form = $('#cash-settings-form'); const settings = state.data.settings; form.balance.value = settings.balance ?? ''; form.currency.value = settings.balanceCurrency || 'USD'; form.payday.value = settings.payday || today(); $('#cash-range').textContent = settings.payday ? `Through ${dateLabel(settings.payday)}` : 'Set your next payday';
-    
-    const displayCurrency = $('#cashflow-currency').value || settings.balanceCurrency || 'USD';
-    const start = new Date(); const end = new Date(`${settings.payday || today()}T12:00:00`); const days = Math.max(1, Math.ceil((end - start) / 86400000)); const balance = number(settings.balance); const daily = balance / days; let running = balance; let cumulative = 0;
-    
-    // Build table rows instead of chart
-    const rows = monthlyDates(today(), settings.payday || today()).slice(0, 45).map((date, index) => {
-      const key = date.toISOString().slice(0, 10);
-      const spend = state.data.transactions.filter((item) => item.type === 'expense' && item.date === key && item.currency === (settings.balanceCurrency || 'USD')).reduce((sum, item) => sum + number(item.amount), 0);
-      cumulative += spend;
-      running -= daily + spend;
-      const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      const runningInDisplay = convertCurrency(running, settings.balanceCurrency || 'USD', displayCurrency);
-      const cumulativeInDisplay = convertCurrency(cumulative, settings.balanceCurrency || 'USD', displayCurrency);
-      const targetInDisplay = convertCurrency(daily * (index + 1), settings.balanceCurrency || 'USD', displayCurrency);
-      return { label, value: running, valueInDisplay: runningInDisplay, cumulative: cumulativeInDisplay, target: targetInDisplay };
-    });
-    
-    $('#cashflow-table').innerHTML = rows.map((row, index) => `
-      <div class="stack-row">
-        <span><strong>Day ${index + 1}</strong><small>${row.label}</small></span>
-        <span><strong>${money(row.valueInDisplay, displayCurrency)}</strong><small>Balance</small></span>
-        <span>${money(row.target, displayCurrency)}<small>Safe target</small></span>
-        <span>${money(row.cumulative, displayCurrency)}<small>Spend</small></span>
-      </div>
-    `).join('') || '<p class="muted">Set your balance and payday to see the daily runway.</p>';
-    
-    $('#spend-list').innerHTML = state.data.transactions.filter((item) => item.type === 'expense').sort((a, b) => b.date.localeCompare(a.date)).map((item) => {
-      const amountInDisplay = convertCurrency(number(item.amount), item.currency, displayCurrency);
-      return `<div class="stack-row"><span><strong>${item.category || 'Spend'}</strong><small>${dateLabel(item.date)}</small></span><span><strong>${money(amountInDisplay, displayCurrency)}</strong><button class="text-button" data-delete="transactions" data-id="${item.id}">Delete</button></span></div>`;
-    }).join('') || '<p class="muted">No daily spend recorded yet.</p>';
+    if (!state.data) return;
+    const form = $('#cash-settings-form'); const settings = state.data.settings || {};
+    if (!form) return;
+    form.balance.value = settings.balance ?? ''; form.currency.value = settings.balanceCurrency || 'USD'; form.payday.value = settings.payday || today();
+    const rangeEl = $('#cash-range'); if (rangeEl) rangeEl.textContent = settings.payday ? `Through ${dateLabel(settings.payday)}` : 'Set your next payday';
+    const currencySelect = $('#cashflow-currency');
+    const displayCurrency = (currencySelect && currencySelect.value) || settings.balanceCurrency || 'USD';
+    if (currencySelect) currencySelect.value = displayCurrency;
+    // iOS runway: one row per day from today through payday with starting, safe, commitments, bills, ending.
+    const balanceCurrency = settings.balanceCurrency || 'USD';
+    const balance = number(settings.balance);
+    const paydayStr = settings.payday || today();
+    const startDay = new Date(); startDay.setHours(12, 0, 0, 0);
+    const endDay = new Date(`${paydayStr}T12:00:00`);
+    const dayCount = Math.max(1, Math.ceil((endDay - startDay) / 86400000) + 1);
+    const safeToday = dayCount ? balance / dayCount : 0;
+    const bills = (state.data.bills || []).filter((b) => currencyOf(b) === balanceCurrency);
+    const commitments = (state.data.commitments || []).filter((c) => currencyOf(c) === balanceCurrency);
+    const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+    function billsOn(date) {
+      return bills.filter((b) => {
+        const dueDay = Math.min(number(b.dueDay) || 1, daysInMonth(date.getFullYear(), date.getMonth()));
+        if (dueDay !== date.getDate()) return false;
+        const wd = date.getDay();
+        let shifted = new Date(date); if (wd === 6) shifted.setDate(shifted.getDate() + 2); else if (wd === 0) shifted.setDate(shifted.getDate() + 1);
+        return shifted.getDate() === date.getDate();
+      }).reduce((s, b) => s + number(b.amount), 0);
+    }
+    function commitmentsOn(date) {
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      return commitments.filter((c) => String(c.date) === key).reduce((s, c) => s + number(c.amount), 0);
+    }
+    let running = balance; let cumulative = 0; let rowsHtml = '';
+    const totalDays = Math.min(dayCount, 45);
+    for (let i = 0; i < totalDays; i += 1) {
+      const d = new Date(startDay); d.setDate(d.getDate() + i);
+      const starting = running;
+      const cToday = commitmentsOn(d);
+      const bToday = billsOn(d);
+      cumulative += cToday;
+      const ending = starting - safeToday - cToday - bToday;
+      running = ending;
+      rowsHtml += `<div class="stack-row"><span><strong>${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</strong><small>Day ${i + 1}</small></span><span>${money(convertCurrency(starting, balanceCurrency, displayCurrency), displayCurrency)}<small>Starting</small></span><span>${money(convertCurrency(safeToday, balanceCurrency, displayCurrency), displayCurrency)}<small>Safe today</small></span><span>${money(convertCurrency(cToday, balanceCurrency, displayCurrency), displayCurrency)}<small>Commitments</small></span><span>${money(convertCurrency(cumulative, balanceCurrency, displayCurrency), displayCurrency)}<small>Cumulative</small></span><span>${money(convertCurrency(bToday, balanceCurrency, displayCurrency), displayCurrency)}<small>Bills</small></span><span><strong>${money(convertCurrency(ending, balanceCurrency, displayCurrency), displayCurrency)}</strong><small>Ending</small></span></div>`;
+    }
+    const tableEl = $('#cashflow-table'); if (tableEl) tableEl.innerHTML = rowsHtml || '<p class="muted">Set your balance and payday to see the daily runway.</p>';
+    const cashSummary = $('#cash-runway-summary');
+    if (cashSummary) cashSummary.innerHTML = `<div><span>Safe to commit each day</span><strong>${money(convertCurrency(safeToday, balanceCurrency, displayCurrency), displayCurrency)}</strong></div><div><span>Days to payday</span><strong>${totalDays}</strong></div><div><span>Projected at payday</span><strong>${money(convertCurrency(running, balanceCurrency, displayCurrency), displayCurrency)}</strong></div>`;
+    const cList = $('#commitment-list');
+    if (cList) cList.innerHTML = (state.data.commitments || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).map((item) => {
+      const cur = currencyOf(item);
+      return `<div class="stack-row"><span><strong>${escapeHtml(item.name || 'Commitment')}</strong><small>${dateLabel(item.date)} · ${cur}</small></span><span><strong>${money(number(item.amount), cur)}</strong> <button class="text-button" data-edit="commitments" data-id="${item.id}">Edit</button> <button class="text-button" data-delete="commitments" data-id="${item.id}">Delete</button></span></div>`;
+    }).join('') || '<p class="muted">No commitments recorded yet.</p>';
+    const bList = $('#bill-list');
+    if (bList) bList.innerHTML = (state.data.bills || []).map((bill) => {
+      const cur = currencyOf(bill);
+      return `<div class="stack-row"><span><strong>${escapeHtml(bill.name || 'Bill')}</strong><small>${escapeHtml(bill.category || '')} · due day ${bill.dueDay ?? ''} · ${cur}</small></span><span><strong>${money(number(bill.amount), cur)}</strong> <button class="text-button" data-edit="bills" data-id="${bill.id}">Edit</button> <button class="text-button" data-delete="bills" data-id="${bill.id}">Delete</button></span></div>`;
+    }).join('') || '<p class="muted">No recurring bills yet.</p>';
   }
 
   function renderPosition() {
+    if (!state.data) return;
     const select = $('#position-currency');
-    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'networth').map((item) => item.currency))];
-    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    const entries = state.data.netWorthEntries || [];
+    const history = state.data.netWorthHistory || [];
+    const currenciesUsed = [...new Set([...entries.map(currencyOf), ...history.map(currencyOf)])];
+    const fallback = state.data.settings?.balanceCurrency || 'USD';
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || fallback);
     select.value = displayCurrency;
-    const points = snapshotSeries('networth', displayCurrency);
-    $('#position-growth').textContent = monthGrowth(points);
+    select.innerHTML = currencyOptions(displayCurrency);
+    const points = snapshotSeries('netWorthHistory', displayCurrency);
+    const growthEl = $('#position-growth'); if (growthEl) growthEl.textContent = monthGrowth(points);
     const totals = currentTotals();
-    $('#position-totals').innerHTML = Object.entries(totals)
+    const totalsEl = $('#position-totals');
+    if (totalsEl) totalsEl.innerHTML = Object.entries(totals)
       .map(([currency, value]) => {
         const converted = convertCurrency(value, currency, displayCurrency);
         return `<div class="stack-row"><span><strong>${currency}</strong><small>Net position (converted to ${displayCurrency})</small></span><strong>${money(converted, displayCurrency)}</strong></div>`;
       })
       .join('') || '<p class="muted">No current position recorded.</p>';
-    $('#position-history').innerHTML = points
-      .map((p) => {
-        const converted = convertCurrency(p.value, p.currency, displayCurrency);
-        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
-      })
-      .join('') || '<p class="muted">No position values recorded yet.</p>';
+    const entryRows = entries.map((e) => {
+      const cur = currencyOf(e);
+      const sub = [e.institution, e.kind, cur].filter(Boolean).join(' • ');
+      return `<div class="stack-row"><span><strong>${escapeHtml(e.name || 'Account')}</strong><small>${escapeHtml(sub)}</small></span><span><strong>${money(number(e.value), cur)}</strong> <button class="text-button" data-edit="netWorthEntries" data-id="${e.id}">Edit</button> <button class="text-button" data-update-entry="netWorthEntries" data-id="${e.id}">Update</button> <button class="text-button" data-delete="netWorthEntries" data-id="${e.id}">Delete</button></span></div>`;
+    }).join('');
+    const histRows = points.map((p) => {
+      const cur = currencyOf(p);
+      const converted = convertCurrency(number(p.value), cur, displayCurrency);
+      return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${escapeHtml(seriesNameOf(p))} · original: ${money(number(p.value), cur)} ${cur}</small></span><span><button class="text-button" data-edit="netWorthHistory" data-id="${p.id}">Edit</button> <button class="text-button" data-delete="netWorthHistory" data-id="${p.id}">Delete</button></span></div>`;
+    }).join('');
+    const histEl = $('#position-history');
+    if (histEl) histEl.innerHTML = (entryRows ? `<div class="section-heading"><div><p class="eyebrow">ACCOUNTS</p><h3>Current position</h3></div></div>` + entryRows : '') + (histRows ? `<div class="section-heading"><div><p class="eyebrow">HISTORY</p><h3>Dated snapshots</h3></div></div>` + histRows : '<p class="muted">No position values recorded yet.</p>');
   }
   function renderPortfolio() {
+    if (!state.data) return;
     const select = $('#portfolio-currency');
-    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'portfolio').map((item) => item.currency))];
-    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    const holdings = state.data.holdings || [];
+    const hist = state.data.portfolioHistory || [];
+    const currenciesUsed = [...new Set([...holdings.map(currencyOf), ...hist.map(currencyOf)])];
+    const fallback = state.data.settings?.balanceCurrency || 'USD';
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || fallback);
     select.value = displayCurrency;
-    const points = snapshotSeries('portfolio', displayCurrency);
-    $('#portfolio-growth').textContent = monthGrowth(points);
-    $('#portfolio-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
-      .map((p) => {
-        const converted = convertCurrency(p.value, p.currency, displayCurrency);
-        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
-      })
-      .join('') || '<p class="muted">No portfolio values recorded yet.</p>';
+    select.innerHTML = currencyOptions(displayCurrency);
+    const pts = snapshotSeries('portfolioHistory', displayCurrency);
+    const growthEl = $('#portfolio-growth'); if (growthEl) growthEl.textContent = monthGrowth(pts);
+    const holdRows = holdings.map((h) => {
+      const cur = currencyOf(h);
+      const mv = number(h.quantity) * number(h.price);
+      const sub = [h.symbol, h.type, `${number(h.quantity)} units`, cur].filter(Boolean).join(' • ');
+      return `<div class="stack-row"><span><strong>${escapeHtml(seriesNameOf(h))}</strong><small>${escapeHtml(sub)}</small></span><span><strong>${money(mv, cur)}</strong> <button class="text-button" data-edit="holdings" data-id="${h.id}">Edit</button> <button class="text-button" data-update-entry="holdings" data-id="${h.id}">Update</button> <button class="text-button" data-delete="holdings" data-id="${h.id}">Delete</button></span></div>`;
+    }).join('');
+    const snapRows = pts.map((p) => {
+        const cur = currencyOf(p);
+        const converted = convertCurrency(number(p.value), cur, displayCurrency);
+        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${escapeHtml(seriesNameOf(p))} · original: ${money(number(p.value), cur)} ${cur}</small></span><span><button class="text-button" data-edit="portfolioHistory" data-id="${p.id}">Edit</button> <button class="text-button" data-delete="portfolioHistory" data-id="${p.id}">Delete</button></span></div>`;
+      }).join('');
+    const portEl = $('#portfolio-history');
+    if (portEl) portEl.innerHTML = (holdRows ? `<div class="section-heading"><div><p class="eyebrow">HOLDINGS</p><h3>Current holdings</h3></div></div>` + holdRows : '') + (snapRows ? `<div class="section-heading"><div><p class="eyebrow">HISTORY</p><h3>Dated snapshots</h3></div></div>` + snapRows : '<p class="muted">No portfolio values recorded yet.</p>');
   }
   function renderPensions() {
+    if (!state.data) return;
     const select = $('#pension-currency');
-    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'pension').map((item) => item.currency))];
-    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    const pots = state.data.pensions || [];
+    const phist = state.data.pensionHistory || [];
+    const currenciesUsed = [...new Set([...pots.map(currencyOf), ...phist.map(currencyOf)])];
+    const fallback = state.data.settings?.balanceCurrency || 'USD';
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || fallback);
     select.value = displayCurrency;
-    const points = snapshotSeries('pension', displayCurrency);
-    $('#pension-growth').textContent = monthGrowth(points);
-    $('#pension-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
-      .map((p) => {
-        const converted = convertCurrency(p.value, p.currency, displayCurrency);
-        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
-      })
-      .join('') || '<p class="muted">No pension values recorded yet.</p>';
+    select.innerHTML = currencyOptions(displayCurrency);
+    const pts = snapshotSeries('pensionHistory', displayCurrency);
+    const growthEl = $('#pension-growth'); if (growthEl) growthEl.textContent = monthGrowth(pts);
+    const potRows = pots.map((pp) => {
+      const cur = currencyOf(pp);
+      const sub = [pp.provider, cur].filter(Boolean).join(' • ');
+      return `<div class="stack-row"><span><strong>${escapeHtml(pp.name || 'Pension pot')}</strong><small>${escapeHtml(sub)}</small></span><span><strong>${money(number(pp.value), cur)}</strong> <button class="text-button" data-edit="pensions" data-id="${pp.id}">Edit</button> <button class="text-button" data-update-entry="pensions" data-id="${pp.id}">Update</button> <button class="text-button" data-delete="pensions" data-id="${pp.id}">Delete</button></span></div>`;
+    }).join('');
+    const snapRows = pts.map((p) => {
+        const cur = currencyOf(p);
+        const converted = convertCurrency(number(p.value), cur, displayCurrency);
+        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${escapeHtml(seriesNameOf(p))} · original: ${money(number(p.value), cur)} ${cur}</small></span><span><button class="text-button" data-edit="pensionHistory" data-id="${p.id}">Edit</button> <button class="text-button" data-delete="pensionHistory" data-id="${p.id}">Delete</button></span></div>`;
+      }).join('');
+    const penEl = $('#pension-history');
+    if (penEl) penEl.innerHTML = (potRows ? `<div class="section-heading"><div><p class="eyebrow">POTS</p><h3>Current pots</h3></div></div>` + potRows : '') + (snapRows ? `<div class="section-heading"><div><p class="eyebrow">HISTORY</p><h3>Dated snapshots</h3></div></div>` + snapRows : '<p class="muted">No pension values recorded yet.</p>');
   }
   function renderBudgets() { $('#budget-list').innerHTML = state.data.budgets.map((budget) => { const used = number(budget.spent); const limit = number(budget.limit); const percent = Math.min(100, limit ? (used / limit) * 100 : 0); return `<article class="budget-card ${percent > 100 ? 'over' : ''}"><p class="eyebrow">MONTHLY TARGET</p><h3>${budget.name}</h3><div class="budget-number">${money(Math.max(0, limit - used), budget.currency)} left</div><div class="progress"><span style="width:${percent}%"></span></div><p class="muted" style="margin-top:8px">${money(used, budget.currency)} used of ${money(limit, budget.currency)}</p><button class="text-button" data-delete="budgets" data-id="${budget.id}">Remove</button></article>`; }).join('') || '<p class="muted">No budgets yet. Add a safety target.</p>'; }
   function render() {
@@ -266,9 +384,89 @@
       showToast('Spend updated');
     });
   }
-  function positionModal() { openModal('Add historical net worth', `<form><label>Snapshot date${dateInput()}</label><label>Net worth value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save snapshot</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'networth', series: 'Net worth', date: data.date, value: decimal(data.value), currency: data.currency }); showToast('Historical snapshot saved'); }); }
-  function portfolioModal() { openModal('Add portfolio value', `<form><label>Snapshot date${dateInput()}</label><label>Series name<input name="series" value="Portfolio" required></label><label>Portfolio value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save value</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'portfolio', series: data.series, date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio value saved'); }); }
-  function pensionModal() { openModal('Add pension value', `<form><label>Snapshot date${dateInput()}</label><label>Series name<input name="series" value="Pension" required></label><label>Pension value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save value</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'pension', series: data.series, date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension value saved'); }); }
+
+  function commitmentModal(existing) {
+    const isEdit = Boolean(existing);
+    openModal(isEdit ? 'Update commitment' : 'Add commitment', `<form>
+      <label>Name<input name="name" value="${escapeHtml(existing?.name || '')}" placeholder="Evening groceries" required></label>
+      <label>Date${dateInput(existing?.date || '', 'date')}</label>
+      <label>Amount<input name="amount" type="number" step="0.01" value="${existing?.amount ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(existing?.currencyCode || state.data?.settings?.balanceCurrency || 'USD')}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">${isEdit ? 'Save commitment' : 'Add commitment'}</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the commitment a name'); return false; }
+      if (!(Number(data.amount) > 0)) { showToast('Enter a valid amount'); return false; }
+      await saveRecord('commitments', { id: existing?.id || id(), name, date: data.date, amount: decimal(data.amount), currencyCode: data.currency });
+      showToast(isEdit ? 'Commitment updated' : 'Commitment added');
+    });
+  }
+
+  function billModal(existing) {
+    const isEdit = Boolean(existing);
+    openModal(isEdit ? 'Update bill' : 'Add bill', `<form>
+      <label>Name<input name="name" value="${escapeHtml(existing?.name || '')}" placeholder="Rent" required></label>
+      <label>Category<input name="category" value="${escapeHtml(existing?.category || '')}" placeholder="Housing"></label>
+      <label>Amount<input name="amount" type="number" step="0.01" value="${existing?.amount ?? ''}" required></label>
+      <label>Due day (1-31)<input name="dueDay" type="number" min="1" max="31" value="${existing?.dueDay ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(existing?.currencyCode || state.data?.settings?.balanceCurrency || 'USD')}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">${isEdit ? 'Save bill' : 'Add bill'}</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the bill a name'); return false; }
+      if (!(Number(data.amount) > 0)) { showToast('Enter a valid amount'); return false; }
+      const dueDay = Math.min(31, Math.max(1, Number(data.dueDay) || 1));
+      await saveRecord('bills', { id: existing?.id || id(), name, category: data.category || 'Bill', amount: decimal(data.amount), dueDay, currencyCode: data.currency });
+      showToast(isEdit ? 'Bill updated' : 'Bill added');
+    });
+  }
+
+  // Mirrors the iOS AddNetWorthView: creates a named current account/asset/liability.
+  function positionModal() { openModal('Add account', `<form>
+    <label>Name<input name="name" placeholder="Barclays savings" required></label>
+    <label>Institution<input name="institution" placeholder="Barclays"></label>
+    <label>Kind<select name="kind"><option value="Asset">Asset</option><option value="Liability">Liability</option></select></label>
+    <label>Current value<input name="value" type="number" step="0.01" required></label>
+    <label>Currency<select name="currency">${currencyOptions()}</select></label>
+    <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Add account</button></div>
+  </form>`, async (data) => {
+    const name = String(data.name || '').trim();
+    if (!name) { showToast('Give the account a name'); return false; }
+    await saveRecord('netWorthEntries', { id: id(), name, institution: data.institution || '', kind: data.kind || 'Asset', value: decimal(data.value), currencyCode: data.currency });
+    showToast('Account added');
+  }); }
+  // Mirrors the iOS AddHoldingView: creates a named fund or investment account.
+  function portfolioModal() { openModal('Add holding', `<form>
+    <label>Name<input name="name" placeholder="Fund 1" required></label>
+    <label>Symbol<input name="symbol" placeholder="VUSA"></label>
+    <label>Asset type<input name="type" placeholder="ETF"></label>
+    <label>Quantity<input name="quantity" type="number" step="0.0001" required></label>
+    <label>Unit price<input name="price" type="number" step="0.01" required></label>
+    <label>Currency<select name="currency">${currencyOptions()}</select></label>
+    <label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label>
+    <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Add holding</button></div>
+  </form>`, async (data) => {
+    const name = String(data.name || '').trim();
+    if (!name) { showToast('Give the holding a name'); return false; }
+    await saveRecord('holdings', { id: id(), name, symbol: data.symbol || '', type: data.type || '', quantity: decimal(data.quantity), price: decimal(data.price), currencyCode: data.currency });
+    await saveSetting('portfolioGrowth', number(data.growth) / 100);
+    showToast('Holding added');
+  }); }
+  // Mirrors the iOS AddPensionView: creates a named pension pot.
+  function pensionModal() { openModal('Add pension pot', `<form>
+    <label>Pot name<input name="name" placeholder="Pension 1" required></label>
+    <label>Provider<input name="provider" placeholder="Provider"></label>
+    <label>Current value<input name="value" type="number" step="0.01" required></label>
+    <label>Currency<select name="currency">${currencyOptions()}</select></label>
+    <label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label>
+    <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Add pension pot</button></div>
+  </form>`, async (data) => {
+    const name = String(data.name || '').trim();
+    if (!name) { showToast('Give the pot a name'); return false; }
+    await saveRecord('pensions', { id: id(), name, provider: data.provider || '', value: decimal(data.value), currencyCode: data.currency });
+    await saveSetting('pensionGrowth', number(data.growth) / 100);
+    showToast('Pension pot added');
+  }); }
   function budgetModal() { openModal('Add monthly budget', `<form><label>Budget name<input name="name" placeholder="Essentials" required></label><label>Monthly limit<input name="limit" type="number" step="0.01" required></label><label>Already spent<input name="spent" type="number" step="0.01" value="0"></label><label>Currency<select name="currency">${currencyOptions()}</select></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save budget</button></div></form>`, async (data) => { await saveRecord('budgets', { id: id(), name: data.name, limit: decimal(data.limit), spent: decimal(data.spent), currency: data.currency }); showToast('Budget saved'); }); }
 
   function setupEvents() {
@@ -277,15 +475,25 @@
     $$('[data-action="open-cashflow"]').forEach((button) => button.onclick = () => switchView('cashflow'));
     $$('[data-action="open-position"]').forEach((button) => button.onclick = () => switchView('position'));
     $$('[data-action="open-budgets"]').forEach((button) => button.onclick = () => switchView('budgets'));
-    $('[data-action="open-cash-modal"]').onclick = addSpendModal; $('[data-action="open-position-modal"]').onclick = positionModal; $('[data-action="open-portfolio-modal"]').onclick = portfolioModal; $('[data-action="open-pension-modal"]').onclick = pensionModal; $('[data-action="open-budget-modal"]').onclick = budgetModal;
+    const bind = (selector, handler) => { const el = $(selector); if (el) el.onclick = handler; };
+    bind('[data-action="open-commitment-modal"]', () => commitmentModal());
+    bind('[data-action="open-bill-modal"]', () => billModal());
+    bind('[data-action="open-position-modal"]', positionModal);
+    bind('[data-action="open-portfolio-modal"]', portfolioModal);
+    bind('[data-action="open-pension-modal"]', pensionModal);
+    bind('[data-action="open-budget-modal"]', budgetModal);
+    bind('[data-action="open-cash-modal"]', addSpendModal);
     $('#cash-settings-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveSetting('balance', decimal(data.balance)); await saveSetting('balanceCurrency', data.currency); await saveSetting('payday', data.payday); showToast('Runway settings saved'); render(); };
-    $('#position-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'networth', series: 'Net worth', date: data.date, value: decimal(data.value), currency: data.currency }); showToast('Net-worth snapshot saved'); };
-    $('#portfolio-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'portfolio', series: 'Portfolio', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio data saved'); };
-    $('#pension-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'pension', series: 'Pension', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension data saved'); };
-    $('#position-currency').onchange = renderPosition; $('#portfolio-currency').onchange = renderPortfolio; $('#pension-currency').onchange = renderPensions;
-    $('#dashboard-currency').onchange = renderDashboard;
-    $('#cashflow-currency').onchange = renderCashflow;
-    $('#spend-currency').onchange = renderCashflow;
+    // iOS-aligned stores: dated histories, not the legacy snapshots store.
+    $('#position-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); const name = String(data.series || '').trim(); if (!name) { showToast('Give this account a name such as Barclays savings'); return false; } await saveRecord('netWorthHistory', { id: id(), series: name, date: data.date, value: decimal(data.value), currencyCode: data.currency }); showToast('Position snapshot saved'); return false; };
+    $('#portfolio-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); const name = String(data.series || '').trim(); if (!name) { showToast('Give this fund a name such as Fund 1'); return false; } await saveRecord('portfolioHistory', { id: id(), series: name, date: data.date, value: decimal(data.value), currencyCode: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio data saved'); return false; };
+    $('#pension-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); const name = String(data.series || '').trim(); if (!name) { showToast('Give this pot a name such as Pension 1'); return false; } await saveRecord('pensionHistory', { id: id(), series: name, date: data.date, value: decimal(data.value), currencyCode: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension data saved'); return false; };
+    const bindChange = (selector, handler) => { const el = $(selector); if (el) el.onchange = handler; };
+    bindChange('#position-currency', renderPosition);
+    bindChange('#portfolio-currency', renderPortfolio);
+    bindChange('#pension-currency', renderPensions);
+    bindChange('#dashboard-currency', renderDashboard);
+    bindChange('#cashflow-currency', renderCashflow);
     document.body.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-delete]');
     if (!button) return;
@@ -302,26 +510,117 @@
     if (!button) return;
     const recordId = button.dataset.id;
     const store = button.dataset.edit;
-    if (store === 'snapshots' && recordId) {
-      const match = state.data.snapshots.find((item) => item.id === recordId);
-      if (match) editSnapshotModal(match, match.type);
-    }
+    if (!recordId) return;
+    const list = state.data[store] || [];
+    const match = list.find((item) => item.id === recordId);
+    if (!match) return;
+    if (store === 'commitments') return commitmentModal(match);
+    if (store === 'bills') return billModal(match);
+    if (store === 'transactions') return editSpendModal(match);
+    if (store === 'netWorthEntries') return editNetWorthEntryModal(match);
+    if (store === 'holdings') return editHoldingModal(match);
+    if (store === 'pensions') return editPensionModal(match);
+    if (store === 'netWorthHistory' || store === 'portfolioHistory' || store === 'pensionHistory') return editHistoryModal(match, store);
+  });
+  document.body.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-update-entry]');
+    if (!button) return;
+    const match = (state.data[button.dataset.updateEntry] || []).find((item) => item.id === button.dataset.id);
+    if (match) updateEntryModal(match, button.dataset.updateEntry);
   });
 
-  function editSnapshotModal(snapshot, type) {
-    const existingSeries = state.data.snapshots
-      .filter((s) => s.type === type)
-      .map((s) => s.series)
-      .filter((v, i, a) => a.indexOf(v) === i);
-    const seriesOptions = existingSeries.map((s) => `<option value="${s}">${s}</option>`).join('');
-    openModal(`Update ${type === 'networth' ? 'net worth' : type === 'portfolio' ? 'portfolio' : 'pension'} snapshot`, `<form>
+  function updateEntryModal(entry, store) {
+    const labels = { netWorthEntries: 'net worth', holdings: 'unit price', pensions: 'pension value' };
+    const subject = entry.name || entry.symbol || 'this entry';
+    const cur = currencyOf(entry);
+    openModal(`Update ${labels[store] || 'value'}`, `<form>
+      <label>Name<input name="name" value="${escapeHtml(subject)}" disabled></label>
+      <label>Date${dateInput()}</label>
+      <label>${store === 'holdings' ? 'Unit price on this date' : 'Value on this date'}<input name="value" type="number" step="0.01" required></label>
+      <p class="muted">Stored in ${cur}. A dated snapshot is recorded under ${escapeHtml(subject)}.</p>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Update</button></div>
+    </form>`, async (data) => {
+      if (data.value === '' || Number.isNaN(Number(data.value))) { showToast('Enter a valid value'); return false; }
+      const amount = decimal(data.value);
+      const date = data.date || today();
+      const series = entry.name || entry.symbol || subject;
+      if (store === 'netWorthEntries') {
+        entry.value = amount;
+        await saveRecord('netWorthEntries', entry);
+        await saveRecord('netWorthHistory', { id: id(), series, date, value: amount, currencyCode: cur });
+      } else if (store === 'holdings') {
+        entry.price = amount;
+        await saveRecord('holdings', entry);
+        await saveRecord('portfolioHistory', { id: id(), series, date, value: number(entry.quantity) * amount, currencyCode: cur });
+      } else if (store === 'pensions') {
+        entry.value = amount;
+        await saveRecord('pensions', entry);
+        await saveRecord('pensionHistory', { id: id(), series, date, value: amount, currencyCode: cur });
+      }
+      showToast('Value updated and snapshot recorded');
+    });
+  }
+
+  function editNetWorthEntryModal(entry) {
+    openModal('Edit account', `<form>
+      <label>Name<input name="name" value="${escapeHtml(entry.name || '')}" placeholder="Barclays savings" required></label>
+      <label>Institution<input name="institution" value="${escapeHtml(entry.institution || '')}"></label>
+      <label>Kind<select name="kind"><option value="Asset" ${entry.kind !== 'Liability' ? 'selected' : ''}>Asset</option><option value="Liability" ${entry.kind === 'Liability' ? 'selected' : ''}>Liability</option></select></label>
+      <label>Current value<input name="value" type="number" step="0.01" value="${entry.value ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(currencyOf(entry))}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Save account</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the account a name'); return false; }
+      await saveRecord('netWorthEntries', { ...entry, name, institution: data.institution || '', kind: data.kind, value: decimal(data.value), currencyCode: data.currency });
+      showToast('Account updated');
+    });
+  }
+
+  function editHoldingModal(holding) {
+    openModal('Edit holding', `<form>
+      <label>Name<input name="name" value="${escapeHtml(holding.name || '')}" placeholder="Fund 1" required></label>
+      <label>Symbol<input name="symbol" value="${escapeHtml(holding.symbol || '')}"></label>
+      <label>Asset type<input name="type" value="${escapeHtml(holding.type || '')}" placeholder="ETF"></label>
+      <label>Quantity<input name="quantity" type="number" step="0.0001" value="${holding.quantity ?? ''}" required></label>
+      <label>Unit price<input name="price" type="number" step="0.01" value="${holding.price ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(currencyOf(holding))}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Save holding</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the holding a name'); return false; }
+      await saveRecord('holdings', { ...holding, name, symbol: data.symbol || '', type: data.type || '', quantity: decimal(data.quantity), price: decimal(data.price), currencyCode: data.currency });
+      showToast('Holding updated');
+    });
+  }
+
+  function editPensionModal(pension) {
+    openModal('Edit pension pot', `<form>
+      <label>Pot name<input name="name" value="${escapeHtml(pension.name || '')}" placeholder="Pension 1" required></label>
+      <label>Provider<input name="provider" value="${escapeHtml(pension.provider || '')}"></label>
+      <label>Current value<input name="value" type="number" step="0.01" value="${pension.value ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(currencyOf(pension))}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Save pension</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the pot a name'); return false; }
+      await saveRecord('pensions', { ...pension, name, provider: data.provider || '', value: decimal(data.value), currencyCode: data.currency });
+      showToast('Pension updated');
+    });
+  }
+
+  function editHistoryModal(record, store) {
+    const titles = { netWorthHistory: 'net worth', portfolioHistory: 'portfolio', pensionHistory: 'pension' };
+    const names = (state.data[store] || []).map((r) => r.series).filter((v, i, a) => a.indexOf(v) === i);
+    const seriesOptions = names.map((s) => `<option value="${escapeHtml(s)}" ${s === record.series ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('') || `<option value="${escapeHtml(record.series)}" selected>${escapeHtml(record.series)}</option>`;
+    openModal(`Update ${titles[store]} snapshot`, `<form>
       <label>Series name<select name="series">${seriesOptions}</select></label>
-      <label>Snapshot date${dateInput(snapshot?.date || '', 'date')}</label>
-      <label>Value<input name="value" type="number" step="0.01" value="${snapshot?.value || ''}" required></label>
-      <label>Currency<select name="currency">${currencyOptions(snapshot?.currency || 'USD')}</select></label>
+      <label>Snapshot date${dateInput(record.date || '', 'date')}</label>
+      <label>Value<input name="value" type="number" step="0.01" value="${record.value ?? ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(currencyOf(record))}</select></label>
       <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Update snapshot</button></div>
     </form>`, async (data) => {
-      await saveRecord('snapshots', { id: snapshot.id, type, series: data.series, date: data.date, value: decimal(data.value), currency: data.currency });
+      await saveRecord(store, { ...record, series: data.series, date: data.date, value: decimal(data.value), currencyCode: data.currency });
       showToast('Snapshot updated');
     });
   }
