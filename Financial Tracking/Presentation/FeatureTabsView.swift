@@ -1,18 +1,33 @@
 import SwiftUI
+import Charts
 
 struct FeatureTabsView: View {
-    @State private var currencyPicker: StoreCurrencyPicker?
+    @State private var currencyPicker = StoreCurrencyPicker()
+    @EnvironmentObject private var store: AppDataStore
+
     var body: some View {
         TabView {
-            CashFlowView(currencyPicker: currencyPickerBinding).tabItem { Label("Cash Flow", systemImage: "calendar") }
-            NetWorthView(currencyPicker: currencyPickerBinding).tabItem { Label("Position", systemImage: "chart.pie") }
-            PortfolioView(currencyPicker: currencyPickerBinding).tabItem { Label("Portfolio", systemImage: "chart.line.uptrend.xyaxis") }
-            PensionView(currencyPicker: currencyPickerBinding).tabItem { Label("Pensions", systemImage: "figure.walk") }
+            CashFlowView()
+                .tabItem { Label("Cash Flow", systemImage: "calendar") }
+
+            NetWorthView()
+                .tabItem { Label("Position", systemImage: "chart.pie") }
+
+            PortfolioView()
+                .tabItem { Label("Portfolio", systemImage: "chart.line.uptrend.xyaxis") }
+
+            PensionView()
+                .tabItem { Label("Pensions", systemImage: "figure.walk") }
+
             HowToView().tabItem { Label("How To", systemImage: "questionmark.circle") }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $currencyPicker.isPresented) {
+            CurrencyPickerSheet(picker: $currencyPicker) {
+                store.currentBalanceCurrencyCode = currencyPicker.selectedCurrencyCode
+            }
+        }
     }
-    var currencyPickerBinding: Binding<StoreCurrencyPicker?> { $currencyPicker }
 }
 
 // MARK: - How To

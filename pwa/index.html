@@ -33,7 +33,8 @@
         <section class="panel runway-panel">
           <div class="section-heading"><div><p class="eyebrow">RUNWAY</p><h3>Cash safety</h3></div><button class="text-button" data-action="open-cashflow">Edit</button></div>
           <div class="runway-summary" id="runway-summary"></div>
-          <canvas id="runway-chart" height="180" aria-label="Cash runway chart"></canvas>
+          <label class="compact">View currency<select id="dashboard-currency"></select></label>
+          <div id="runway-table" class="stack-list"></div>
         </section>
         <div class="split-grid">
           <section class="panel"><div class="section-heading"><div><p class="eyebrow">POSITION</p><h3>Net worth</h3></div><button class="text-button" data-action="open-position">View</button></div><div id="networth-breakdown"></div></section>
@@ -51,35 +52,51 @@
             <button class="primary-button" type="submit">Save runway</button>
           </form>
         </section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">DAILY VIEW</p><h3>Balance versus safe spend</h3></div><span class="muted" id="cash-range"></span></div><canvas id="cashflow-chart" height="250" aria-label="Daily cash flow chart"></canvas><div class="legend"><span><i class="dot blue"></i>Balance</span><span><i class="dot orange"></i>Cumulative spend</span><span><i class="dot green"></i>Safe spend target</span></div></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">SPEND LOG</p><h3>Recorded daily spend</h3></div></div><div id="spend-list" class="stack-list"></div></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">DAILY VIEW</p><h3>Daily runway table</h3></div><span class="muted" id="cash-range"></span></div><label class="compact">View currency<select id="cashflow-currency"></select></label><div id="cashflow-table" class="stack-list"></div></section>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">SPEND LOG</p><h3>Recorded daily spend</h3></div><label class="compact">View currency<select id="spend-currency"></select></label></div><div id="spend-list" class="stack-list"></div></section>
       </section>
 
       <section class="view" data-view="position">
-        <div class="view-heading"><div><p class="eyebrow">FINANCIAL POSITION</p><h2>Accounts and net worth</h2><p>Keep values in their native currencies and compare like-for-like histories.</p></div><button class="primary-button" data-action="open-position-modal">Add snapshot</button></div>
-        <section class="panel form-panel"><form id="position-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Net worth value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><button class="primary-button" type="submit">Save snapshot</button></form></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">HISTORY</p><h3>Net worth trajectory</h3></div><select id="position-currency" data-currencies></select></div><canvas id="position-chart" height="230"></canvas><p class="growth-callout" id="position-growth"></p></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">CURRENT TOTALS</p><h3>By currency</h3></div></div><div id="position-totals" class="stack-list"></div></section>
+        <div class="view-heading"><div><p class="eyebrow">FINANCIAL POSITION</p><h2>Accounts and net worth</h2><p>Add snapshots across any currency, give each one a name, and switch the screen to read them in your preferred currency.</p></div><button class="primary-button" data-action="open-position-modal">Add snapshot</button></div>
+        <section class="panel form-panel"><form id="position-form" class="inline-form"><label>Snapshot name<input name="series" placeholder="Barclays savings" required></label><label>Snapshot date<input name="date" type="date" required></label><label>Value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><button class="primary-button" type="submit">Save snapshot</button></form></section>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h3>Net worth by series</h3></div><label class="compact">View currency<select id="position-currency"></select></label></div><div id="position-history" class="stack-list"></div></section>
       </section>
 
       <section class="view" data-view="portfolio">
-        <div class="view-heading"><div><p class="eyebrow">PORTFOLIO</p><h2>Investments and growth</h2><p>Record valuation snapshots, measure actual change, and model an annual return.</p></div><button class="primary-button" data-action="open-portfolio-modal">Add value</button></div>
-        <section class="panel form-panel"><form id="portfolio-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Portfolio value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save portfolio data</button></form></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTUAL + PROJECTED</p><h3>Portfolio trajectory</h3></div><select id="portfolio-currency" data-currencies></select></div><canvas id="portfolio-chart" height="230"></canvas><p class="growth-callout" id="portfolio-growth"></p></section>
-        <div id="portfolio-history" class="panel"></div>
+        <div class="view-heading"><div><p class="eyebrow">PORTFOLIO</p><h2>Investments and growth</h2><p>Add snapshots across any currency, give each one a name, and switch the screen to read them in your preferred currency.</p></div><button class="primary-button" data-action="open-portfolio-modal">Add value</button></div>
+        <section class="panel form-panel"><form id="portfolio-form" class="inline-form"><label>Series name<input name="series" placeholder="Fund 1" required></label><label>Snapshot date<input name="date" type="date" required></label><label>Value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save portfolio data</button></form></section>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div><label class="compact">View currency<select id="portfolio-currency"></select></label></div><div id="portfolio-history" class="stack-list"></div></section>
       </section>
 
       <section class="view" data-view="pensions">
-        <div class="view-heading"><div><p class="eyebrow">RETIREMENT</p><h2>Pension outlook</h2><p>See actual month-on-month movement alongside a compound annual projection.</p></div><button class="primary-button" data-action="open-pension-modal">Add value</button></div>
-        <section class="panel form-panel"><form id="pension-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Pension value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save pension data</button></form></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTUAL + PROJECTED</p><h3>Retirement trajectory</h3></div><select id="pension-currency" data-currencies></select></div><canvas id="pension-chart" height="230"></canvas><p class="growth-callout" id="pension-growth"></p></section>
-        <div id="pension-history" class="panel"></div>
+        <div class="view-heading"><div><p class="eyebrow">RETIREMENT</p><h2>Pension outlook</h2><p>Add snapshots across any currency, give each one a name, and switch the screen to read them in your preferred currency.</p></div><button class="primary-button" data-action="open-pension-modal">Add value</button></div>
+        <section class="panel form-panel"><form id="pension-form" class="inline-form"><label>Pot name<input name="series" placeholder="Pension pot 1" required></label><label>Snapshot date<input name="date" type="date" required></label><label>Value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save pension data</button></form></section>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div><label class="compact">View currency<select id="pension-currency"></select></label></div><div id="pension-history" class="stack-list"></div></section>
       </section>
 
       <section class="view" data-view="budgets">
         <div class="view-heading"><div><p class="eyebrow">BUDGETS</p><h2>Safety targets</h2><p>Set a monthly limit and track how much room remains.</p></div><button class="primary-button" data-action="open-budget-modal">Add budget</button></div>
+        <section class="panel"><div class="panel-heading"><div><p class="eyebrow">BUDGETS</p><h3>Monthly budgets</h3></div><label class="compact">View currency<select id="budget-currency"></select></label></div><div id="budget-list"></div><p>Set a monthly budget for each currency you use.</p></section>
+      </section>
+      <section class="view" data-view="backup" data-loaded="false">
         <div id="budget-list" class="card-grid"></div>
       </section>
+
+      <section class="view" data-view="howto">
+        <div class="view-heading"><div><p class="eyebrow">HOW TO USE THIS APP</p><h2>How to use this app</h2><p>All data stays local to this browser. Use the Backup tab to export or import a backup, or use it to restore a backup.</p></div></div>
+        <section class="panel">
+          <p class="eyebrow">Morning focus</p>
+          <ol>
+            <li>Set your first day's balance, currency and payday.</li>
+            <li>Add a bill.</li>
+          </ol>
+        </section>
+        <section class="panel">
+          <p class="eyebrow">POKÉMON</p>
+          <p>This is your first Pokémon app. Now with a Pokémon image.</p>
+        </section>
+      </section>
+
 
       <section class="view" data-view="backup">
         <div class="view-heading"><div><p class="eyebrow">DATA CONTROL</p><h2>Backup and restore</h2><p>Your data never leaves this browser unless you export it yourself.</p></div></div>
@@ -95,6 +112,7 @@
       <button class="nav-item" data-nav="pensions"><span>◫</span>Pensions</button>
       <button class="nav-item" data-nav="budgets"><span>◎</span>Budgets</button>
       <button class="nav-item" data-nav="backup"><span>↥</span>Backup</button>
+      <button class="nav-item" data-nav="howto"><span>?</span>How to</button>
     </nav>
   </div>
   <div id="modal-root"></div>

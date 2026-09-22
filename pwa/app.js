@@ -10,7 +10,11 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const id = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
   const today = () => new Date().toISOString().slice(0, 10);
-  const money = (value, currency = 'USD') => new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value) || 0);
+  const money = (value, currency = 'USD') => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '$0.00';
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency, currencyDisplay: 'narrowSymbol', maximumFractionDigits: num % 1 === 0 ? 0 : 2 }).format(num); } catch { return '$' + num.toFixed(2); }
+  };
   const number = (value) => Number(value || 0);
   const dateLabel = (value) => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${value}T12:00:00`));
   const decimal = (value) => Math.round(number(value) * 100) / 100;
@@ -32,8 +36,18 @@
   async function clearStore(storeName) { const db = await openDB(); return new Promise((resolve, reject) => { const req = db.transaction(storeName, 'readwrite').objectStore(storeName).clear(); req.onsuccess = resolve; req.onerror = () => reject(req.error); }); }
   async function loadData() { const entries = await Promise.all(stores.map(async (store) => [store, await all(store)])); const result = Object.fromEntries(entries); result.settings = Object.fromEntries(result.settings.map((item) => [item.key, item.value])); return result; }
   async function saveSetting(key, value) { await put('settings', { id: key, key, value }); state.data.settings[key] = value; }
-  async function saveRecord(store, record) { await put(store, record); const list = state.data[store]; const index = list.findIndex((item) => item.id === record.id); if (index < 0) list.push(record); else list[index] = record; render(); }
-  async function deleteRecord(store, recordId) { await remove(store, recordId); state.data[store] = state.data[store].filter((item) => item.id !== recordId); render(); }
+  async function saveRecord(store, record) {
+    await put(store, record);
+    state.data[store] = await all(store);
+    render();
+    showToast('Saved');
+  }
+  async function deleteRecord(store, recordId) {
+    await remove(store, recordId);
+    state.data[store] = await all(store);
+    if (store === 'settings') state.data.settings = Object.fromEntries(state.data.settings.map((item) => [item.key, item.value]));
+    render();
+  }
 
   function setTheme(theme) { state.theme = theme; document.documentElement.dataset.theme = theme; localStorage.setItem('fh-theme', theme); $('#theme-toggle').textContent = theme === 'dark' ? '☾' : '☼'; }
   function populateCurrencies() { $$('[data-currencies]').forEach((select) => { select.innerHTML = Object.entries(currencies).map(([code, name]) => `<option value="${code}">${code} · ${name}</option>`).join(''); }); }
@@ -62,58 +76,166 @@
   function projectedPoints(value, annualRate, months = 12) { return Array.from({ length: months + 1 }, (_, index) => { const date = new Date(); date.setMonth(date.getMonth() + index); return { label: date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }), value: number(value) * Math.pow(1 + number(annualRate), index / 12) }; }); }
   function monthlyDates(start, end) { const dates = []; const cursor = new Date(`${start}T12:00:00`); const finish = new Date(`${end}T12:00:00`); while (cursor <= finish) { dates.push(new Date(cursor)); cursor.setDate(cursor.getDate() + 1); } return dates; }
 
+  const exchangeRates = { USD: 1, EUR: 0.92, GBP: 0.79, CAD: 1.36, AUD: 1.53, JPY: 149.50, CHF: 0.88, CNY: 7.24, INR: 83.12 };
+
+  function convertCurrency(amount, fromCurrency, toCurrency) {
+    if (fromCurrency === toCurrency) return amount;
+    const fromRate = exchangeRates[fromCurrency] || 1;
+    const toRate = exchangeRates[toCurrency] || 1;
+    return amount * (toRate / fromRate);
+  }
+
   function renderDashboard() {
-    const totals = currentTotals(); const totalValues = Object.values(totals); const totalNetWorth = totalValues.reduce((a, b) => a + b, 0); const transactionSpend = state.data.transactions.reduce((sum, item) => sum + (item.type === 'expense' ? number(item.amount) : 0), 0);
-    $('#headline-metrics').innerHTML = `<div class="metric"><span class="eyebrow">NET WORTH</span><span class="value">${money(totalNetWorth)}</span><span class="detail">Across local records</span></div><div class="metric"><span class="eyebrow">AVAILABLE</span><span class="value">${money(state.data.settings.balance || 0, state.data.settings.balanceCurrency || 'USD')}</span><span class="detail">Next payday ${state.data.settings.payday ? dateLabel(state.data.settings.payday) : 'not set'}</span></div><div class="metric"><span class="eyebrow">EXPENSES LOGGED</span><span class="value">${money(transactionSpend)}</span><span class="detail">Local activity only</span></div>`;
-    const balance = number(state.data.settings.balance); const payday = state.data.settings.payday || today(); const days = Math.max(1, Math.ceil((new Date(`${payday}T12:00:00`) - new Date()) / 86400000)); const daily = balance / days; $('#runway-summary').innerHTML = `<div><span>Daily safe-to-spend</span><strong>${money(daily, state.data.settings.balanceCurrency || 'USD')}</strong></div><div><span>Days to payday</span><strong>${days}</strong></div><div><span>Payday balance</span><strong>${money(balance - daily * days, state.data.settings.balanceCurrency || 'USD')}</strong></div>`;
-    const values = Array.from({ length: Math.min(days + 1, 31) }, (_, index) => ({ label: `Day ${index + 1}`, value: balance - daily * index })); drawChart($('#runway-chart'), [{ values, currency: state.data.settings.balanceCurrency || 'USD' }], ['#2e6bff']);
-    $('#networth-breakdown').innerHTML = Object.entries(totals).length ? Object.entries(totals).map(([currency, value]) => `<div class="stack-row"><span><strong>${currency}</strong><small>Net position</small></span><strong>${money(value, currency)}</strong></div>`).join('') : '<p class="muted">Add an account snapshot to begin.</p>';
-    const budgets = state.data.budgets; $('#budget-health').innerHTML = budgets.length ? budgets.slice(0, 2).map((budget) => `<div class="stack-row"><span><strong>${budget.name}</strong><small>${budget.spent || 0} of ${budget.limit} ${budget.currency}</small></span><strong>${Math.max(0, number(budget.limit) - number(budget.spent))} left</strong></div>`).join('') : '<p class="muted">Set a monthly budget target.</p>';
+    const displayCurrency = $('#dashboard-currency').value || 'USD';
+    const totals = currentTotals();
+    const transactionSpend = state.data.transactions.reduce((sum, item) => sum + (item.type === 'expense' ? number(item.amount) : 0), 0);
+    const spendInDisplayCurrency = convertCurrency(transactionSpend, state.data.settings.balanceCurrency || 'USD', displayCurrency);
+    
+    // Convert all totals to display currency
+    const convertedTotals = {};
+    let totalNetWorth = 0;
+    Object.entries(totals).forEach(([currency, value]) => {
+      const converted = convertCurrency(value, currency, displayCurrency);
+      convertedTotals[currency] = converted;
+      totalNetWorth += converted;
+    });
+    
+    const balance = number(state.data.settings.balance);
+    const balanceInDisplay = convertCurrency(balance, state.data.settings.balanceCurrency || 'USD', displayCurrency);
+    
+    $('#headline-metrics').innerHTML = `<div class="metric"><span class="eyebrow">NET WORTH</span><span class="value">${money(totalNetWorth, displayCurrency)}</span><span class="detail">Across local records</span></div><div class="metric"><span class="eyebrow">AVAILABLE</span><span class="value">${money(balanceInDisplay, displayCurrency)}</span><span class="detail">Next payday ${state.data.settings.payday ? dateLabel(state.data.settings.payday) : 'not set'}</span></div><div class="metric"><span class="eyebrow">EXPENSES LOGGED</span><span class="value">${money(spendInDisplayCurrency, displayCurrency)}</span><span class="detail">Local activity only</span></div>`;
+    
+    const payday = state.data.settings.payday || today();
+    const days = Math.max(1, Math.ceil((new Date(`${payday}T12:00:00`) - new Date()) / 86400000));
+    const daily = balance / days;
+    const dailyInDisplay = convertCurrency(daily, state.data.settings.balanceCurrency || 'USD', displayCurrency);
+    const paydayBalanceInDisplay = convertCurrency(balance - daily * days, state.data.settings.balanceCurrency || 'USD', displayCurrency);
+    
+    $('#runway-summary').innerHTML = `<div><span>Daily safe-to-spend</span><strong>${money(dailyInDisplay, displayCurrency)}</strong></div><div><span>Days to payday</span><strong>${days}</strong></div><div><span>Payday balance</span><strong>${money(paydayBalanceInDisplay, displayCurrency)}</strong></div>`;
+    
+    // Render runway table instead of chart
+    const rows = Array.from({ length: Math.min(days + 1, 31) }, (_, index) => {
+      const runningBalance = balance - daily * index;
+      const runningInDisplay = convertCurrency(runningBalance, state.data.settings.balanceCurrency || 'USD', displayCurrency);
+      const date = new Date();
+      date.setDate(date.getDate() + index);
+      const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return { label, value: runningBalance, valueInDisplay: runningInDisplay };
+    });
+    
+    $('#runway-table').innerHTML = rows.map((row, index) => `
+      <div class="stack-row">
+        <span><strong>Day ${index + 1}</strong><small>${row.label}</small></span>
+        <strong>${money(row.valueInDisplay, displayCurrency)}</strong>
+      </div>
+    `).join('') || '<p class="muted">Set your balance and payday to see the runway.</p>';
+    
+    $('#networth-breakdown').innerHTML = Object.entries(totals).length ? Object.entries(totals).map(([currency, value]) => {
+      const converted = convertCurrency(value, currency, displayCurrency);
+      return `<div class="stack-row"><span><strong>${currency}</strong><small>Net position (converted)</small></span><strong>${money(converted, displayCurrency)}</strong></div>`;
+    }).join('') : '<p class="muted">Add an account snapshot to begin.</p>';
+    
+    const budgets = state.data.budgets;
+    $('#budget-health').innerHTML = budgets.length ? budgets.slice(0, 2).map((budget) => {
+      const spentInDisplay = convertCurrency(number(budget.spent || 0), budget.currency, displayCurrency);
+      const limitInDisplay = convertCurrency(number(budget.limit), budget.currency, displayCurrency);
+      return `<div class="stack-row"><span><strong>${budget.name}</strong><small>${spentInDisplay.toFixed(2)} of ${limitInDisplay.toFixed(2)} ${displayCurrency}</small></span><strong>${Math.max(0, limitInDisplay - spentInDisplay).toFixed(2)} left</strong></div>`;
+    }).join('') : '<p class="muted">Set a monthly budget target.</p>';
   }
 
   function renderCashflow() {
     const form = $('#cash-settings-form'); const settings = state.data.settings; form.balance.value = settings.balance ?? ''; form.currency.value = settings.balanceCurrency || 'USD'; form.payday.value = settings.payday || today(); $('#cash-range').textContent = settings.payday ? `Through ${dateLabel(settings.payday)}` : 'Set your next payday';
-    const start = new Date(); const end = new Date(`${settings.payday || today()}T12:00:00`); const days = Math.max(1, Math.ceil((end - start) / 86400000)); const balance = number(settings.balance); const daily = balance / days; let running = balance; let cumulative = 0; const balanceValues = []; const spendValues = []; const targetValues = [];
-    monthlyDates(today(), settings.payday || today()).slice(0, 45).forEach((date, index) => { const key = date.toISOString().slice(0, 10); const spend = state.data.transactions.filter((item) => item.type === 'expense' && item.date === key && item.currency === (settings.balanceCurrency || 'USD')).reduce((sum, item) => sum + number(item.amount), 0); cumulative += spend; running -= daily + spend; const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); balanceValues.push({ label, value: running }); spendValues.push({ label, value: cumulative }); targetValues.push({ label, value: daily * (index + 1) }); });
-    drawChart($('#cashflow-chart'), [{ values: balanceValues, currency: settings.balanceCurrency || 'USD' }, { values: spendValues, currency: settings.balanceCurrency || 'USD' }, { values: targetValues, currency: settings.balanceCurrency || 'USD' }], ['#2e6bff', '#ed8b3c', '#2d9a6a']);
-    $('#spend-list').innerHTML = state.data.transactions.filter((item) => item.type === 'expense').sort((a, b) => b.date.localeCompare(a.date)).map((item) => `<div class="stack-row"><span><strong>${item.category || 'Spend'}</strong><small>${dateLabel(item.date)}</small></span><span><strong>${money(item.amount, item.currency)}</strong><button class="text-button" data-delete="transactions" data-id="${item.id}">Delete</button></span></div>`).join('') || '<p class="muted">No daily spend recorded yet.</p>';
+    
+    const displayCurrency = $('#cashflow-currency').value || settings.balanceCurrency || 'USD';
+    const start = new Date(); const end = new Date(`${settings.payday || today()}T12:00:00`); const days = Math.max(1, Math.ceil((end - start) / 86400000)); const balance = number(settings.balance); const daily = balance / days; let running = balance; let cumulative = 0;
+    
+    // Build table rows instead of chart
+    const rows = monthlyDates(today(), settings.payday || today()).slice(0, 45).map((date, index) => {
+      const key = date.toISOString().slice(0, 10);
+      const spend = state.data.transactions.filter((item) => item.type === 'expense' && item.date === key && item.currency === (settings.balanceCurrency || 'USD')).reduce((sum, item) => sum + number(item.amount), 0);
+      cumulative += spend;
+      running -= daily + spend;
+      const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const runningInDisplay = convertCurrency(running, settings.balanceCurrency || 'USD', displayCurrency);
+      const cumulativeInDisplay = convertCurrency(cumulative, settings.balanceCurrency || 'USD', displayCurrency);
+      const targetInDisplay = convertCurrency(daily * (index + 1), settings.balanceCurrency || 'USD', displayCurrency);
+      return { label, value: running, valueInDisplay: runningInDisplay, cumulative: cumulativeInDisplay, target: targetInDisplay };
+    });
+    
+    $('#cashflow-table').innerHTML = rows.map((row, index) => `
+      <div class="stack-row">
+        <span><strong>Day ${index + 1}</strong><small>${row.label}</small></span>
+        <span><strong>${money(row.valueInDisplay, displayCurrency)}</strong><small>Balance</small></span>
+        <span>${money(row.target, displayCurrency)}<small>Safe target</small></span>
+        <span>${money(row.cumulative, displayCurrency)}<small>Spend</small></span>
+      </div>
+    `).join('') || '<p class="muted">Set your balance and payday to see the daily runway.</p>';
+    
+    $('#spend-list').innerHTML = state.data.transactions.filter((item) => item.type === 'expense').sort((a, b) => b.date.localeCompare(a.date)).map((item) => {
+      const amountInDisplay = convertCurrency(number(item.amount), item.currency, displayCurrency);
+      return `<div class="stack-row"><span><strong>${item.category || 'Spend'}</strong><small>${dateLabel(item.date)}</small></span><span><strong>${money(amountInDisplay, displayCurrency)}</strong><button class="text-button" data-delete="transactions" data-id="${item.id}">Delete</button></span></div>`;
+    }).join('') || '<p class="muted">No daily spend recorded yet.</p>';
   }
 
   function renderPosition() {
     const select = $('#position-currency');
     const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'networth').map((item) => item.currency))];
-    const effective = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
-    select.value = effective;
-    const points = snapshotSeries('networth', effective);
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    select.value = displayCurrency;
+    const points = snapshotSeries('networth', displayCurrency);
     $('#position-growth').textContent = monthGrowth(points);
     const totals = currentTotals();
     $('#position-totals').innerHTML = Object.entries(totals)
-      .map(([currency, value]) => `<div class="stack-row"><span><strong>${currency}</strong><small>Net position</small></span><strong>${money(value, currency)}</strong></div>`)
+      .map(([currency, value]) => {
+        const converted = convertCurrency(value, currency, displayCurrency);
+        return `<div class="stack-row"><span><strong>${currency}</strong><small>Net position (converted to ${displayCurrency})</small></span><strong>${money(converted, displayCurrency)}</strong></div>`;
+      })
       .join('') || '<p class="muted">No current position recorded.</p>';
     $('#position-history').innerHTML = points
-      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .map((p) => {
+        const converted = convertCurrency(p.value, p.currency, displayCurrency);
+        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
+      })
       .join('') || '<p class="muted">No position values recorded yet.</p>';
   }
   function renderPortfolio() {
     const select = $('#portfolio-currency');
-    const currency = select.value || 'USD';
-    const points = snapshotSeries('portfolio', currency);
+    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'portfolio').map((item) => item.currency))];
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    select.value = displayCurrency;
+    const points = snapshotSeries('portfolio', displayCurrency);
     $('#portfolio-growth').textContent = monthGrowth(points);
     $('#portfolio-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
-      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .map((p) => {
+        const converted = convertCurrency(p.value, p.currency, displayCurrency);
+        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
+      })
       .join('') || '<p class="muted">No portfolio values recorded yet.</p>';
   }
   function renderPensions() {
     const select = $('#pension-currency');
-    const currency = select.value || 'USD';
-    const points = snapshotSeries('pension', currency);
+    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'pension').map((item) => item.currency))];
+    const displayCurrency = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    select.value = displayCurrency;
+    const points = snapshotSeries('pension', displayCurrency);
     $('#pension-growth').textContent = monthGrowth(points);
     $('#pension-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
-      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .map((p) => {
+        const converted = convertCurrency(p.value, p.currency, displayCurrency);
+        return `<div class="stack-row"><span><strong>${money(converted, displayCurrency)}</strong><small>${dateLabel(p.date)} · ${p.series} · original: ${money(p.value, p.currency)} ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`;
+      })
       .join('') || '<p class="muted">No pension values recorded yet.</p>';
   }
   function renderBudgets() { $('#budget-list').innerHTML = state.data.budgets.map((budget) => { const used = number(budget.spent); const limit = number(budget.limit); const percent = Math.min(100, limit ? (used / limit) * 100 : 0); return `<article class="budget-card ${percent > 100 ? 'over' : ''}"><p class="eyebrow">MONTHLY TARGET</p><h3>${budget.name}</h3><div class="budget-number">${money(Math.max(0, limit - used), budget.currency)} left</div><div class="progress"><span style="width:${percent}%"></span></div><p class="muted" style="margin-top:8px">${money(used, budget.currency)} used of ${money(limit, budget.currency)}</p><button class="text-button" data-delete="budgets" data-id="${budget.id}">Remove</button></article>`; }).join('') || '<p class="muted">No budgets yet. Add a safety target.</p>'; }
-  function render() { renderDashboard(); renderCashflow(); renderPosition(); renderPortfolio(); renderPensions(); renderBudgets(); }
+  function render() {
+    if (!state.data) return;
+    renderDashboard();
+    renderCashflow();
+    renderPosition();
+    renderPortfolio();
+    renderPensions();
+    renderBudgets();
+  }
 
   function addSpendModal() {
     openModal('Record daily spend', `<form>
@@ -161,6 +283,9 @@
     $('#portfolio-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'portfolio', series: 'Portfolio', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio data saved'); };
     $('#pension-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'pension', series: 'Pension', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension data saved'); };
     $('#position-currency').onchange = renderPosition; $('#portfolio-currency').onchange = renderPortfolio; $('#pension-currency').onchange = renderPensions;
+    $('#dashboard-currency').onchange = renderDashboard;
+    $('#cashflow-currency').onchange = renderCashflow;
+    $('#spend-currency').onchange = renderCashflow;
     document.body.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-delete]');
     if (!button) return;
@@ -182,10 +307,34 @@
       if (match) editSnapshotModal(match, match.type);
     }
   });
+
+  function editSnapshotModal(snapshot, type) {
+    const existingSeries = state.data.snapshots
+      .filter((s) => s.type === type)
+      .map((s) => s.series)
+      .filter((v, i, a) => a.indexOf(v) === i);
+    const seriesOptions = existingSeries.map((s) => `<option value="${s}">${s}</option>`).join('');
+    openModal(`Update ${type === 'networth' ? 'net worth' : type === 'portfolio' ? 'portfolio' : 'pension'} snapshot`, `<form>
+      <label>Series name<select name="series">${seriesOptions}</select></label>
+      <label>Snapshot date${dateInput(snapshot?.date || '', 'date')}</label>
+      <label>Value<input name="value" type="number" step="0.01" value="${snapshot?.value || ''}" required></label>
+      <label>Currency<select name="currency">${currencyOptions(snapshot?.currency || 'USD')}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Update snapshot</button></div>
+    </form>`, async (data) => {
+      await saveRecord('snapshots', { id: snapshot.id, type, series: data.series, date: data.date, value: decimal(data.value), currency: data.currency });
+      showToast('Snapshot updated');
+    });
+  }
     $('#export-data').onclick = async () => { const backup = { format: 'financial-health-backup', version: 1, exportedAt: new Date().toISOString(), data: await loadData() }; const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `financial-health-${today()}.json`; link.click(); URL.revokeObjectURL(link.href); $('#backup-status').textContent = 'Backup exported locally.'; };
     $('#import-data').onchange = async (event) => { const file = event.target.files[0]; if (!file || !confirm('Restore this backup? It will replace current local data.')) return; try { const backup = JSON.parse(await file.text()); if (backup.format !== 'financial-health-backup') throw new Error('Invalid backup'); for (const store of stores) await clearStore(store); for (const [store, values] of Object.entries(backup.data)) { if (store === 'settings') { for (const [key, value] of Object.entries(values)) await put('settings', { id: key, key, value }); } else if (stores.includes(store)) { for (const value of values) await put(store, value); } } state.data = await loadData(); render(); $('#backup-status').textContent = 'Backup restored locally.'; showToast('Backup restored'); } catch (error) { $('#backup-status').textContent = `Restore failed: ${error.message}`; } };
   }
 
-  async function start() { setTheme(state.theme); populateCurrencies(); state.data = await loadData(); setupEvents(); render(); if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {}); window.addEventListener('resize', () => { renderDashboard(); renderCashflow(); renderPosition(); renderPortfolio(); renderPensions(); }); }
+  async function start() { setTheme(state.theme); populateCurrencies(); state.data = await loadData(); 
+    // Populate dashboard currency dropdown
+    const dashboardCurrencySelect = $('#dashboard-currency');
+    if (dashboardCurrencySelect) {
+      dashboardCurrencySelect.innerHTML = currencyOptions(state.data?.settings?.balanceCurrency || 'USD');
+    }
+    setupEvents(); render(); if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {}); window.addEventListener('resize', () => { renderDashboard(); renderCashflow(); renderPosition(); renderPortfolio(); renderPensions(); }); }
   start().catch((error) => { document.body.innerHTML = `<main class="panel" style="margin:24px"><h2>Local database unavailable</h2><p>${error.message}</p></main>`; });
 })();

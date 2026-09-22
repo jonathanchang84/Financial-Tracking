@@ -1,23 +1,47 @@
 # Financial Tracking
 
-Native local-first financial tracking for iPhone, iPad, and Mac. The application uses SwiftUI with a shared domain layer, a locally persisted observable store, a Core Data model factory, and MVVM-oriented feature boundaries.
+Native local-first financial tracking for iPhone, iPad, and Mac, plus an offline browser app (PWA). The Apple app uses SwiftUI with a shared domain layer, a locally persisted observable store, a Core Data model factory, and MVVM-oriented feature boundaries.
 
 ## Current Status
 
-The repository contains the initial implementation foundation:
+### Apple App (SwiftUI)
 
-- Shared Swift package with money, date, recurring-bill, SCD Type 2, and runway rules.
+The Xcode project builds successfully for iOS and macOS. Key features:
+
+- Shared Swift package (`Sources/FinancialTrackingCore`) with money, date, recurring-bill, SCD Type 2, and runway rules.
 - Core Data model factory covering bills, accounts, assets, liabilities, holdings, cached market data, and pensions.
 - Owner-scoped repository boundary for local row-level isolation.
 - Provider-neutral market-data client for a self-hosted REST proxy.
-- SwiftUI shell with Cash Flow, Position, Portfolio, Pensions, and How To tabs.
-- Cash Flow shows the daily runway as a table (starting balance, safe amount, commitments, cumulative commitments, scheduled bills, ending balance) instead of a chart.
+- Currency picker sheet that controls the display currency across all screens.
+- Cash Flow screen with a daily runway table (starting balance, safe amount, commitments, cumulative commitments, scheduled bills, ending balance) — no chart.
 - Named commitments that can be added, renamed, re-dated, re-amounted, and deleted.
-- Named accounts, funds, and pension pots, each with its own dated snapshot series, a latest-value summary table, and an Update control that records a value for a chosen date.
+- Position, Portfolio, and Pensions screens each show:
+  - A latest-value summary table.
+  - A history table of all dated snapshots for that category.
+  - An Update control that lets you pick from existing series names or enter a new name, then record a value for a chosen date.
 - How To screen covering installation and operation for both the Apple app and the browser app.
 - XcodeGen project manifest at `project.yml` and generated `Financial Tracking.xcodeproj`.
 
-The generated project currently includes iOS and macOS application/test schemes. Regenerate it after changing `project.yml` with XcodeGen.
+The generated project includes iOS and macOS application/test schemes. Regenerate it after changing `project.yml` with XcodeGen.
+
+### Browser App (Offline PWA)
+
+The `pwa/` folder contains a standalone offline financial dashboard that runs entirely in the browser using IndexedDB.
+
+Current features:
+
+- Dashboard with headline metrics (net worth, available balance, expenses logged) and a daily runway table instead of a chart.
+- Currency selector on the dashboard that converts all displayed values to the chosen currency using fixed exchange rates.
+- Cash Flow screen with runway settings form and a daily runway table showing balance, safe target, and cumulative spend for each day.
+- Position, Investments, and Pensions screens with:
+  - Forms that accept a series name for every new snapshot.
+  - Update modals that let you pick from existing series names when editing.
+  - History tables showing all dated snapshots with currency conversion.
+- Budgets screen for monthly limits and safety progress.
+- Backup and restore using JSON export/import of the local IndexedDB database.
+- `manifest.json`, `sw.js`, and app icon assets under `pwa/assets/icons/`.
+
+For iPhone installation, serve the same folder over HTTPS from a trusted host, open it in Safari, tap Share, then choose **Add to Home Screen**. The manifest uses standalone display mode and portrait-primary orientation. No account, server, or network service is required after the app shell has been cached.
 
 ## Architecture
 
