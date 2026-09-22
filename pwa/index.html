@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f7fb">
+  <meta name="description" content="Private offline financial health dashboard">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <title>Financial Health</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PRIVATE / OFFLINE</p>
+        <h1>Financial health</h1>
+      </div>
+      <button class="icon-button" id="theme-toggle" aria-label="Toggle color theme" title="Toggle color theme">☼</button>
+    </header>
+
+    <main id="app" aria-live="polite">
+      <section class="view active" data-view="dashboard">
+        <div class="hero-row">
+          <div>
+            <p class="eyebrow">TODAY</p>
+            <h2 id="greeting">Your financial picture</h2>
+          </div>
+          <span class="privacy-pill">● Local only</span>
+        </div>
+        <div class="metric-grid" id="headline-metrics"></div>
+        <section class="panel runway-panel">
+          <div class="section-heading"><div><p class="eyebrow">RUNWAY</p><h3>Cash safety</h3></div><button class="text-button" data-action="open-cashflow">Edit</button></div>
+          <div class="runway-summary" id="runway-summary"></div>
+          <canvas id="runway-chart" height="180" aria-label="Cash runway chart"></canvas>
+        </section>
+        <div class="split-grid">
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">POSITION</p><h3>Net worth</h3></div><button class="text-button" data-action="open-position">View</button></div><div id="networth-breakdown"></div></section>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">BUDGET</p><h3>Safety target</h3></div><button class="text-button" data-action="open-budgets">View</button></div><div id="budget-health"></div></section>
+        </div>
+      </section>
+
+      <section class="view" data-view="cashflow">
+        <div class="view-heading"><div><p class="eyebrow">CASH FLOW</p><h2>Runway planner</h2><p>Set the balance and payday that shape your daily safe-to-spend number.</p></div><button class="primary-button" data-action="open-cash-modal">Add spend</button></div>
+        <section class="panel form-panel">
+          <form id="cash-settings-form" class="inline-form">
+            <label>Available balance<input name="balance" type="number" step="0.01" required></label>
+            <label>Currency<select name="currency" data-currencies></select></label>
+            <label>Next payday<input name="payday" type="date" required></label>
+            <button class="primary-button" type="submit">Save runway</button>
+          </form>
+        </section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">DAILY VIEW</p><h3>Balance versus safe spend</h3></div><span class="muted" id="cash-range"></span></div><canvas id="cashflow-chart" height="250" aria-label="Daily cash flow chart"></canvas><div class="legend"><span><i class="dot blue"></i>Balance</span><span><i class="dot orange"></i>Cumulative spend</span><span><i class="dot green"></i>Safe spend target</span></div></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">SPEND LOG</p><h3>Recorded daily spend</h3></div></div><div id="spend-list" class="stack-list"></div></section>
+      </section>
+
+      <section class="view" data-view="position">
+        <div class="view-heading"><div><p class="eyebrow">FINANCIAL POSITION</p><h2>Accounts and net worth</h2><p>Keep values in their native currencies and compare like-for-like histories.</p></div><button class="primary-button" data-action="open-position-modal">Add snapshot</button></div>
+        <section class="panel form-panel"><form id="position-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Net worth value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><button class="primary-button" type="submit">Save snapshot</button></form></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">HISTORY</p><h3>Net worth trajectory</h3></div><select id="position-currency" data-currencies></select></div><canvas id="position-chart" height="230"></canvas><p class="growth-callout" id="position-growth"></p></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">CURRENT TOTALS</p><h3>By currency</h3></div></div><div id="position-totals" class="stack-list"></div></section>
+      </section>
+
+      <section class="view" data-view="portfolio">
+        <div class="view-heading"><div><p class="eyebrow">PORTFOLIO</p><h2>Investments and growth</h2><p>Record valuation snapshots, measure actual change, and model an annual return.</p></div><button class="primary-button" data-action="open-portfolio-modal">Add value</button></div>
+        <section class="panel form-panel"><form id="portfolio-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Portfolio value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save portfolio data</button></form></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTUAL + PROJECTED</p><h3>Portfolio trajectory</h3></div><select id="portfolio-currency" data-currencies></select></div><canvas id="portfolio-chart" height="230"></canvas><p class="growth-callout" id="portfolio-growth"></p></section>
+        <div id="portfolio-history" class="panel"></div>
+      </section>
+
+      <section class="view" data-view="pensions">
+        <div class="view-heading"><div><p class="eyebrow">RETIREMENT</p><h2>Pension outlook</h2><p>See actual month-on-month movement alongside a compound annual projection.</p></div><button class="primary-button" data-action="open-pension-modal">Add value</button></div>
+        <section class="panel form-panel"><form id="pension-form" class="inline-form"><label>Snapshot date<input name="date" type="date" required></label><label>Pension value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency" data-currencies></select></label><label>Annual growth %<input name="growth" type="number" step="0.1" min="-100" value="5"></label><button class="primary-button" type="submit">Save pension data</button></form></section>
+        <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTUAL + PROJECTED</p><h3>Retirement trajectory</h3></div><select id="pension-currency" data-currencies></select></div><canvas id="pension-chart" height="230"></canvas><p class="growth-callout" id="pension-growth"></p></section>
+        <div id="pension-history" class="panel"></div>
+      </section>
+
+      <section class="view" data-view="budgets">
+        <div class="view-heading"><div><p class="eyebrow">BUDGETS</p><h2>Safety targets</h2><p>Set a monthly limit and track how much room remains.</p></div><button class="primary-button" data-action="open-budget-modal">Add budget</button></div>
+        <div id="budget-list" class="card-grid"></div>
+      </section>
+
+      <section class="view" data-view="backup">
+        <div class="view-heading"><div><p class="eyebrow">DATA CONTROL</p><h2>Backup and restore</h2><p>Your data never leaves this browser unless you export it yourself.</p></div></div>
+        <section class="panel backup-panel"><div class="backup-icon">⌘</div><h3>Local database</h3><p>Export a complete JSON backup or restore one from a file. Restore replaces the local database after confirmation.</p><div class="button-row"><button class="primary-button" id="export-data">Export backup</button><label class="secondary-button file-button">Import backup<input id="import-data" type="file" accept="application/json"></label></div><p class="muted" id="backup-status"></p></section>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <button class="nav-item active" data-nav="dashboard"><span>⌂</span>Overview</button>
+      <button class="nav-item" data-nav="cashflow"><span>◷</span>Cash flow</button>
+      <button class="nav-item" data-nav="position"><span>◒</span>Position</button>
+      <button class="nav-item" data-nav="portfolio"><span>⌁</span>Investments</button>
+      <button class="nav-item" data-nav="pensions"><span>◫</span>Pensions</button>
+      <button class="nav-item" data-nav="budgets"><span>◎</span>Budgets</button>
+      <button class="nav-item" data-nav="backup"><span>↥</span>Backup</button>
+    </nav>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+Resources reserved for the Core Data model, localized strings, and asset catalogs.
