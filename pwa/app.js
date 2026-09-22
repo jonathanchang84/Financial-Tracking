@@ -79,13 +79,71 @@
     $('#spend-list').innerHTML = state.data.transactions.filter((item) => item.type === 'expense').sort((a, b) => b.date.localeCompare(a.date)).map((item) => `<div class="stack-row"><span><strong>${item.category || 'Spend'}</strong><small>${dateLabel(item.date)}</small></span><span><strong>${money(item.amount, item.currency)}</strong><button class="text-button" data-delete="transactions" data-id="${item.id}">Delete</button></span></div>`).join('') || '<p class="muted">No daily spend recorded yet.</p>';
   }
 
-  function renderPosition() { const select = $('#position-currency'); const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'networth').map((item) => item.currency))]; if (!currenciesUsed.includes(select.value)) select.value = currenciesUsed[0] || 'USD'; const points = snapshotSeries('networth', select.value); drawChart($('#position-chart'), [{ values: points.map((p) => ({ label: dateLabel(p.date), value: p.value })), currency: select.value }], ['#2d9a6a']); $('#position-growth').textContent = monthGrowth(points); const totals = currentTotals(); $('#position-totals').innerHTML = Object.entries(totals).map(([currency, value]) => `<div class="stack-row"><span><strong>${currency}</strong><small>Net position</small></span><strong>${money(value, currency)}</strong></div>`).join('') || '<p class="muted">No current position recorded.</p>'; }
-  function renderPortfolio() { const select = $('#portfolio-currency'); const points = snapshotSeries('portfolio', select.value || 'USD'); const history = points.map((p) => ({ label: dateLabel(p.date), value: p.value })); const current = points.at(-1)?.value || 0; drawChart($('#portfolio-chart'), [{ values: history, currency: select.value || 'USD' }, { values: projectedPoints(current, state.data.settings.portfolioGrowth || .05).map((p) => ({ label: p.label, value: p.value })), currency: select.value || 'USD' }], ['#2e6bff', '#ed8b3c']); $('#portfolio-growth').textContent = monthGrowth(points); $('#portfolio-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>${points.map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series}</small></span><button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></div>`).join('') || '<p class="muted">Add a portfolio value above.</p>'}`; }
-  function renderPensions() { const select = $('#pension-currency'); const points = snapshotSeries('pension', select.value || 'USD'); const history = points.map((p) => ({ label: dateLabel(p.date), value: p.value })); const current = points.at(-1)?.value || 0; drawChart($('#pension-chart'), [{ values: history, currency: select.value || 'USD' }, { values: projectedPoints(current, state.data.settings.pensionGrowth || .05).map((p) => ({ label: p.label, value: p.value })), currency: select.value || 'USD' }], ['#7b61ff', '#ed8b3c']); $('#pension-growth').textContent = monthGrowth(points); $('#pension-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>${points.map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series}</small></span><button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></div>`).join('') || '<p class="muted">Add a pension value above.</p>'}`; }
+  function renderPosition() {
+    const select = $('#position-currency');
+    const currenciesUsed = [...new Set(state.data.snapshots.filter((item) => item.type === 'networth').map((item) => item.currency))];
+    const effective = currenciesUsed.includes(select.value) ? select.value : (currenciesUsed[0] || 'USD');
+    select.value = effective;
+    const points = snapshotSeries('networth', effective);
+    $('#position-growth').textContent = monthGrowth(points);
+    const totals = currentTotals();
+    $('#position-totals').innerHTML = Object.entries(totals)
+      .map(([currency, value]) => `<div class="stack-row"><span><strong>${currency}</strong><small>Net position</small></span><strong>${money(value, currency)}</strong></div>`)
+      .join('') || '<p class="muted">No current position recorded.</p>';
+    $('#position-history').innerHTML = points
+      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .join('') || '<p class="muted">No position values recorded yet.</p>';
+  }
+  function renderPortfolio() {
+    const select = $('#portfolio-currency');
+    const currency = select.value || 'USD';
+    const points = snapshotSeries('portfolio', currency);
+    $('#portfolio-growth').textContent = monthGrowth(points);
+    $('#portfolio-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
+      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .join('') || '<p class="muted">No portfolio values recorded yet.</p>';
+  }
+  function renderPensions() {
+    const select = $('#pension-currency');
+    const currency = select.value || 'USD';
+    const points = snapshotSeries('pension', currency);
+    $('#pension-growth').textContent = monthGrowth(points);
+    $('#pension-history').innerHTML = `<div class="section-heading"><div><p class="eyebrow">SNAPSHOTS</p><h3>Actual recorded values</h3></div></div>` + points
+      .map((p) => `<div class="stack-row"><span><strong>${money(p.value, p.currency)}</strong><small>${dateLabel(p.date)} · ${p.series} · ${p.currency}</small></span><span><button class="text-button" data-edit="snapshots" data-id="${p.id}">Update</button> <button class="text-button" data-delete="snapshots" data-id="${p.id}">Delete</button></span></div>`)
+      .join('') || '<p class="muted">No pension values recorded yet.</p>';
+  }
   function renderBudgets() { $('#budget-list').innerHTML = state.data.budgets.map((budget) => { const used = number(budget.spent); const limit = number(budget.limit); const percent = Math.min(100, limit ? (used / limit) * 100 : 0); return `<article class="budget-card ${percent > 100 ? 'over' : ''}"><p class="eyebrow">MONTHLY TARGET</p><h3>${budget.name}</h3><div class="budget-number">${money(Math.max(0, limit - used), budget.currency)} left</div><div class="progress"><span style="width:${percent}%"></span></div><p class="muted" style="margin-top:8px">${money(used, budget.currency)} used of ${money(limit, budget.currency)}</p><button class="text-button" data-delete="budgets" data-id="${budget.id}">Remove</button></article>`; }).join('') || '<p class="muted">No budgets yet. Add a safety target.</p>'; }
   function render() { renderDashboard(); renderCashflow(); renderPosition(); renderPortfolio(); renderPensions(); renderBudgets(); }
 
-  function addSpendModal() { openModal('Record daily spend', `<form><label>Date${dateInput()}</label><label>Amount<input name="amount" type="number" step="0.01" required></label><label>Category<input name="category" placeholder="Food, transport, etc."></label><label>Currency<select name="currency">${currencyOptions()}</select></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save spend</button></div></form>`, async (data) => { await saveRecord('transactions', { id: id(), type: 'expense', date: data.date, amount: decimal(data.amount), category: data.category || 'Spend', currency: data.currency }); showToast('Daily spend saved'); }); }
+  function addSpendModal() {
+    openModal('Record daily spend', `<form>
+      <label>Name<input name="name" placeholder="Evening groceries" required></label>
+      <label>Date${dateInput()}</label>
+      <label>Amount<input name="amount" type="number" step="0.01" required></label>
+      <label>Category<input name="category" placeholder="Food"></label>
+      <label>Currency<select name="currency">${options()}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Save spend</button></div>
+    </form>`, async (data) => {
+      const name = String(data.name || '').trim();
+      if (!name) { showToast('Give the spend a name such as Evening groceries'); return false; }
+      await saveRecord('transactions', { id: id(), type: 'expense', date: data.date, amount: decimal(data.amount), category: data.category || 'Spend', currency: data.currency, name });
+      showToast('Daily spend saved');
+    });
+  }
+
+  function editSpendModal(transaction) {
+    openModal('Update spend', `<form>
+      <label>Name<input name="name" value="${escapeHtml(transaction?.name || '')}" required></label>
+      <label>Date${dateInput(transaction?.date || '', 'date')}</label>
+      <label>Amount<input name="amount" type="number" step="0.01" value="${transaction?.amount || ''}" required></label>
+      <label>Category<input name="category" value="${escapeHtml(transaction?.category || '')}"></label>
+      <label>Currency<select name="currency">${options(transaction?.currency || 'USD')}</select></label>
+      <div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button" type="submit">Update spend</button></div>
+    </form>`, async (data) => {
+      await saveRecord('transactions', { id: transaction.id, type: 'expense', date: data.date, amount: decimal(data.amount), category: data.category || 'Spend', currency: data.currency, name: data.name });
+      showToast('Spend updated');
+    });
+  }
   function positionModal() { openModal('Add historical net worth', `<form><label>Snapshot date${dateInput()}</label><label>Net worth value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save snapshot</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'networth', series: 'Net worth', date: data.date, value: decimal(data.value), currency: data.currency }); showToast('Historical snapshot saved'); }); }
   function portfolioModal() { openModal('Add portfolio value', `<form><label>Snapshot date${dateInput()}</label><label>Series name<input name="series" value="Portfolio" required></label><label>Portfolio value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save value</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'portfolio', series: data.series, date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio value saved'); }); }
   function pensionModal() { openModal('Add pension value', `<form><label>Snapshot date${dateInput()}</label><label>Series name<input name="series" value="Pension" required></label><label>Pension value<input name="value" type="number" step="0.01" required></label><label>Currency<select name="currency">${currencyOptions()}</select></label><label>Anticipated annual growth %<input name="growth" type="number" step="0.1" value="5"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancel</button><button class="primary-button">Save value</button></div></form>`, async (data) => { await saveRecord('snapshots', { id: id(), type: 'pension', series: data.series, date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension value saved'); }); }
@@ -103,7 +161,27 @@
     $('#portfolio-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'portfolio', series: 'Portfolio', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('portfolioGrowth', number(data.growth) / 100); showToast('Portfolio data saved'); };
     $('#pension-form').onsubmit = async (event) => { event.preventDefault(); const data = formData(event.target); await saveRecord('snapshots', { id: id(), type: 'pension', series: 'Pension', date: data.date, value: decimal(data.value), currency: data.currency }); await saveSetting('pensionGrowth', number(data.growth) / 100); showToast('Pension data saved'); };
     $('#position-currency').onchange = renderPosition; $('#portfolio-currency').onchange = renderPortfolio; $('#pension-currency').onchange = renderPensions;
-    document.body.addEventListener('click', async (event) => { const button = event.target.closest('[data-delete]'); if (!button) return; if (confirm('Delete this local record?')) { await deleteRecord(button.dataset.delete, button.dataset.id); showToast('Record deleted'); } });
+    document.body.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-delete]');
+    if (!button) return;
+    const recordId = button.dataset.id;
+    const store = button.dataset.delete;
+    if (confirm('Delete this local record?')) {
+      await deleteRecord(store, recordId);
+      showToast('Record deleted');
+    }
+    return;
+  });
+  document.body.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-edit]');
+    if (!button) return;
+    const recordId = button.dataset.id;
+    const store = button.dataset.edit;
+    if (store === 'snapshots' && recordId) {
+      const match = state.data.snapshots.find((item) => item.id === recordId);
+      if (match) editSnapshotModal(match, match.type);
+    }
+  });
     $('#export-data').onclick = async () => { const backup = { format: 'financial-health-backup', version: 1, exportedAt: new Date().toISOString(), data: await loadData() }; const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `financial-health-${today()}.json`; link.click(); URL.revokeObjectURL(link.href); $('#backup-status').textContent = 'Backup exported locally.'; };
     $('#import-data').onchange = async (event) => { const file = event.target.files[0]; if (!file || !confirm('Restore this backup? It will replace current local data.')) return; try { const backup = JSON.parse(await file.text()); if (backup.format !== 'financial-health-backup') throw new Error('Invalid backup'); for (const store of stores) await clearStore(store); for (const [store, values] of Object.entries(backup.data)) { if (store === 'settings') { for (const [key, value] of Object.entries(values)) await put('settings', { id: key, key, value }); } else if (stores.includes(store)) { for (const value of values) await put(store, value); } } state.data = await loadData(); render(); $('#backup-status').textContent = 'Backup restored locally.'; showToast('Backup restored'); } catch (error) { $('#backup-status').textContent = `Restore failed: ${error.message}`; } };
   }
