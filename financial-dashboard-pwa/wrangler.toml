@@ -1,8 +1,17 @@
-# Cloudflare Pages project configuration.
-# Deploy with: npm run deploy   (or connect the Git repo in the Pages dashboard)
+# Cloudflare deployment configuration — static PWA only (free tier).
+# - Cloudflare Pages: Root directory = `financial-dashboard-pwa`,
+#   Build command = `npm run build`, Output directory = `dist`.
+# - Cloudflare Workers Static Assets (`*.workers.dev`):
+#   `wrangler deploy` / `wrangler pages deploy dist` serves ONLY `./dist`.
+#   Never point the asset directory at the project root, or the dev
+#   `/src/main.js` shell ships instead of the hashed `/assets/*` bundle.
 name = "financial-dashboard-pwa"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "dist"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
 
 # Free-tier friendly: pure static assets, no Functions, no cron, no Durable Objects.
 # Build command: npm run build
