@@ -30,7 +30,8 @@
         const result = await signUp(email, password);
         if (result.needsConfirmation) {
           needsConfirmation = true;
-          message = 'Account created — check your email to confirm your address, then sign in.';
+          message =
+            'Account created — confirmation email required. Confirm the link, then sign in (or tap resend below).';
         } else {
           needsConfirmation = false;
           showToast('Account created and signed in');
@@ -49,7 +50,7 @@
     }
   }
 
-  /** Re-send the confirmation email (Supabase allows 2 per hour by default). */
+  /** Re-send the confirmation email, only relevant when Supabase email confirmation is on. */
   async function resend() {
     busy = true;
     error = '';
@@ -109,7 +110,7 @@
       </label>
         {#if error}<p class="error">{error}</p>{/if}
         {#if message}<p class="hint">{message}</p>{/if}
-        {#if mode === 'signup' && email}
+        {#if mode === 'signup' && needsConfirmation && email}
           <div class="modal-actions">
             <button class="secondary-button" type="button" disabled={busy} onclick={resend}>
               Resend confirmation email

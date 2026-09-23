@@ -233,7 +233,7 @@ export async function flushPending({ all = false, notify = false } = {}) {
     const user = await getSessionUser();
   if (!user || !hasConfirmedSession()) {
     await refreshSyncStatus();
-    setStatus('Saved locally', 'Confirm your email to sync with the cloud.');
+    setStatus('Saved locally', 'Sign in to sync with the cloud.');
     return { pushed: 0, failed: 0, skipped: true };
   }
 

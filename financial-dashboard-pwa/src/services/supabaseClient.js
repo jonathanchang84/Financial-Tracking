@@ -83,14 +83,15 @@ export async function signUp(email, password) {
   if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) throw friendlyAuthError(error);
-  // When email confirmation is ON, data.session is null and the user must
-  // click the Supabase email link, then sign in. When confirmation is OFF,
-  // data.session exists and they are signed in immediately.
+  // With email confirmation ON, data.session is null and the user must
+  // click the emailed link before signing in. With confirmation OFF (the
+  // app's intended setup), data.session exists and they are signed in
+  // immediately — no email round-trip, no send limits, unlimited users.
   session.set(data.session?.user ?? null);
   return { user: data.user, needsConfirmation: !data.session };
 }
 
-/** Re-send the sign-up confirmation email (default SMTP allows 2/hour). */
+/** Re-send the sign-up confirmation email (only used when confirmation is on). */
 export async function resendConfirmation(email) {
   if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   const { error } = await supabase.auth.resend({ type: 'signup', email });
@@ -98,18 +99,19 @@ export async function resendConfirmation(email) {
 }
 
 /**
- * Translate Supabase Auth errors into actionable copy. The built-in SMTP
- * server only mails project team members and allows 2 messages per hour;
- * most sign-up failures for additional users hit one of those two limits.
+ * Translate Supabase Auth errors into end-user copy. With email
+ * confirmation disabled in Supabase (the app's default posture) these
+ * paths are rare — they only surface if the project re-enables
+ * confirmation or hits broader auth rate limits.
  */
 export function friendlyAuthError(error) {
   const message = String(error?.message || error || '');
   const status = Number(error?.status ?? error?.code ?? 0);
   if (status === 429 || /rate limit|too many requests/i.test(message)) {
-    return 'Sign-up emails are rate-limited right now (Supabase allows 2 per hour by default). Wait a little and try again, or ask the app owner to enable custom SMTP in Supabase.';
+    return 'Too many attempts in a short time — please wait a minute and try again.';
   }
   if (/not authorized/i.test(message)) {
-    return 'This email cannot receive confirmations yet. The app owner must add the address in Supabase (organization → Team) or enable custom SMTP.';
+    return 'This email address cannot be used to sign up right now. Please contact the app owner.';
   }
   if (/already registered|already been registered/i.test(message)) {
     return 'An account with this email already exists — switch to "Sign in".';
