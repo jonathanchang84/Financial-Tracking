@@ -1,7 +1,18 @@
 <script>
-  /** Supabase Auth gateway: email + password sign in / sign up, or sign out. */
+  /** Supabase Auth gateway: email + password sign in / sign up, forgot/reset password, or sign out. */
   import Modal from './Modal.svelte';
-  import { cloudEnabled, session, signIn, signUp, signOut, resendConfirmation } from '../services/supabaseClient.js';
+  import {
+    cloudEnabled,
+    session,
+    signIn,
+    signUp,
+    signOut,
+    resendConfirmation,
+    resetPassword,
+    updatePassword,
+    passwordRecovery,
+    clearPasswordRecovery
+  } from '../services/supabaseClient.js';
   import { showToast } from '../stores/ui.js';
 
   let { onClose = () => {} } = $props();
@@ -9,12 +20,24 @@
         let mode = $state('login');
   let email = $state('');
   let password = $state('');
+  let confirmPassword = $state('');
   let busy = $state(false);
   let message = $state('');
   let error = $state('');
   let needsConfirmation = $state(false);
 
+  // Arriving from a password-recovery email link → open straight into
+  // the "set new password" form (even though a temporary session exists).
+  if ($passwordRecovery) mode = 'reset';
+
   const user = $derived($session);
+
+  function switchMode(next) {
+    mode = next;
+    error = '';
+    message = '';
+    needsConfirmation = false;
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -37,6 +60,19 @@
           showToast('Account created and signed in');
           onClose();
         }
+      } else if (mode === 'forgot') {
+        await resetPassword(email);
+        message = 'If an account exists for that email, a reset link is on its way — check your inbox (and spam).';
+        showToast('Password reset email sent');
+      } else if (mode === 'reset') {
+        if (password !== confirmPassword) {
+          error = 'Passwords do not match.';
+          busy = false;
+          return;
+        }
+        await updatePassword(password);
+        showToast('Password updated — sign in with your new password');
+        switchMode('login');
       } else {
         await signIn(email, password);
         showToast('Signed in');
@@ -79,7 +115,15 @@
 </script>
 
 <Modal
-  title={user ? 'Your account' : mode === 'login' ? 'Sign in' : 'Create account'}
+  title={mode === 'reset'
+    ? 'Set new password'
+    : mode === 'forgot'
+      ? 'Reset your password'
+      : user
+        ? 'Your account'
+        : mode === 'login'
+          ? 'Sign in'
+          : 'Create account'}
   eyebrow="CLOUD ACCOUNT"
   subtitle="Sync is optional — the app stays fully functional offline without an account."
   {onClose}
@@ -87,6 +131,45 @@
   {#if !cloudEnabled}
     <p class="error">Supabase keys are missing from this build, so cloud sync stays off.</p>
     <p class="hint">Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file and rebuild.</p>
+  {:else if mode === 'reset'}
+    <p class="hint">Choose a new password for <strong>{user?.email ?? email}</strong>.</p>
+    <form onsubmit={submit}>
+      <label>New password
+        <input
+          type="password"
+          bind:value={password}
+          minlength="6"
+          autocomplete="new-password"
+          required
+        />
+      </label>
+      <label>Confirm new password
+        <input
+          type="password"
+          bind:value={confirmPassword}
+          minlength="6"
+          autocomplete="new-password"
+          required
+        />
+      </label>
+      {#if error}<p class="error">{error}</p>{/if}
+      {#if message}<p class="hint">{message}</p>{/if}
+      <div class="modal-actions">
+        <button
+          class="secondary-button"
+          type="button"
+          onclick={() => {
+            clearPasswordRecovery();
+            switchMode('login');
+          }}
+        >
+          Back to sign in
+        </button>
+        <button class="primary-button" type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save new password'}
+        </button>
+      </div>
+    </form>
   {:else if user}
     <p class="hint">Signed in as <strong>{user.email}</strong></p>
     <p class="hint">Rows are stored with owner_id = {user.id.slice(0, 8)}… and protected by row level security.</p>
@@ -99,6 +182,7 @@
       <label>Email
         <input type="email" bind:value={email} autocomplete="email" required />
       </label>
+      {#if mode !== 'forgot'}
       <label>Password
         <input
           type="password"
@@ -108,6 +192,7 @@
           required
         />
       </label>
+      {/if}
         {#if error}<p class="error">{error}</p>{/if}
         {#if message}<p class="hint">{message}</p>{/if}
         {#if mode === 'signup' && needsConfirmation && email}
@@ -118,19 +203,30 @@
           </div>
         {/if}
       <div class="modal-actions">
-        <button
-          class="secondary-button"
-          type="button"
-          onclick={() => {
-            mode = mode === 'login' ? 'signup' : 'login';
-            error = '';
-            message = '';
-          }}
-        >
-          {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
-        </button>
+        {#if mode === 'login'}
+          <button class="secondary-button" type="button" onclick={() => switchMode('signup')}>
+            Need an account? Sign up
+          </button>
+          <button
+            class="secondary-button"
+            type="button"
+            style="opacity:.75"
+            onclick={() => switchMode('forgot')}
+          >
+            Forgot password?
+          </button>
+        {:else if mode === 'signup'}
+          <button class="secondary-button" type="button" onclick={() => switchMode('login')}>
+            Have an account? Sign in
+          </button>
+        {:else}
+          <!-- forgot mode -->
+          <button class="secondary-button" type="button" onclick={() => switchMode('login')}>
+            Back to sign in
+          </button>
+        {/if}
         <button class="primary-button" type="submit" disabled={busy}>
-          {mode === 'login' ? 'Sign in' : 'Sign up'}
+          {mode === 'login' ? 'Sign in' : mode === 'forgot' ? 'Send reset link' : 'Sign up'}
         </button>
       </div>
     </form>

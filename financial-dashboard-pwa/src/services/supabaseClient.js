@@ -33,6 +33,15 @@ export const cloudTarget = url || '';
 export const session = writable(null);
 export const authReady = writable(false);
 export const authError = writable('');
+/**
+ * True when the user arrived via a password-recovery email link — the app
+ * should open the Auth modal in "set new password" mode.
+ */
+export const passwordRecovery = writable(false);
+
+export function clearPasswordRecovery() {
+  passwordRecovery.set(false);
+}
 
 export function currentUser() {
   return get(session);
@@ -46,6 +55,12 @@ export async function restoreSession() {
   try {
     const { data } = await supabase.auth.getSession();
     session.set(data?.session?.user ?? null);
+    // Fallback for the recovery link: the PASSWORD_RECOVERY event can fire
+    // during client init before listeners attach, but the URL still carries
+    // type=recovery (implicit flow) at that point.
+    if (!get(passwordRecovery) && /type=recovery/.test(location.hash)) {
+      passwordRecovery.set(true);
+    }
   } catch {
     session.set(null);
   } finally {
@@ -99,6 +114,28 @@ export async function resendConfirmation(email) {
 }
 
 /**
+ * Send a password-reset email. The link returns the user to this app,
+ * where PASSWORD_RECOVERY opens the "set new password" form.
+ * NOTE: the destination must be listed under
+ * Authentication → URL Configuration → Redirect URLs in Supabase.
+ */
+export async function resetPassword(email) {
+  if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${location.origin}${location.pathname}`
+  });
+  if (error) throw friendlyAuthError(error);
+}
+
+/** Set a new password for the recovery session (valid only after the email link). */
+export async function updatePassword(newPassword) {
+  if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw friendlyAuthError(error);
+  passwordRecovery.set(false);
+}
+
+/**
  * Translate Supabase Auth errors into end-user copy. With email
  * confirmation disabled in Supabase (the app's default posture) these
  * paths are rare — they only surface if the project re-enables
@@ -126,6 +163,12 @@ export function friendlyAuthError(error) {
   if (/password should be at least/i.test(message)) {
     return 'Password must be at least 6 characters.';
   }
+  if (/link is invalid or has expired|token has expired|expired/i.test(message)) {
+    return 'This reset link has expired or was already used — request a new one.';
+  }
+  if (/user not found/i.test(message)) {
+    return 'No account found for that email address.';
+  }
   return message;
 }
 
@@ -141,6 +184,7 @@ export function onAuthChange(handler) {
   const { data } = supabase.auth.onAuthStateChange((event, next) => {
     session.set(next?.user ?? null);
     authReady.set(true);
+    if (event === 'PASSWORD_RECOVERY') passwordRecovery.set(true);
     handler?.(event, next?.user ?? null);
   });
   return () => data?.subscription?.unsubscribe?.();

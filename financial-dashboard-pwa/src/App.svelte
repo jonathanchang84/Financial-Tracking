@@ -15,7 +15,7 @@
   import CurrencySelect from './components/CurrencySelect.svelte';
   import { initStores } from './stores/finance.js';
   import { initSyncEngine, teardownSyncEngine, syncStatus, syncDetail, pendingCount } from './services/syncEngine.js';
-  import { session } from './services/supabaseClient.js';
+  import { session, passwordRecovery } from './services/supabaseClient.js';
   import { theme, toggleTheme, watchConnectivity, online } from './stores/ui.js';
 
   const VIEWS = [
@@ -63,6 +63,12 @@
   }
 
   const signedIn = $derived(Boolean($session));
+
+  // Arriving from a password-recovery email link → open the Auth modal
+  // straight into its "set new password" form.
+  $effect(() => {
+    if ($passwordRecovery) showAuth = true;
+  });
 </script>
 
 {#if bootError}
