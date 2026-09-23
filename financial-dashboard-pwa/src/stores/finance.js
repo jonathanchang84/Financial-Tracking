@@ -38,7 +38,8 @@ export const RATES = {
   JPY: 149.5,
   CHF: 0.88,
   CNY: 7.24,
-  INR: 83.12
+  INR: 83.12,
+  PLN: 4.0
 };
 
 export const CURRENCY_NAMES = {
@@ -50,7 +51,8 @@ export const CURRENCY_NAMES = {
   JPY: 'Japanese Yen',
   CHF: 'Swiss Franc',
   CNY: 'Chinese Yuan',
-  INR: 'Indian Rupee'
+  INR: 'Indian Rupee',
+  PLN: 'Polish Złoty'
 };
 
 export const CURRENCIES = Object.keys(RATES);
