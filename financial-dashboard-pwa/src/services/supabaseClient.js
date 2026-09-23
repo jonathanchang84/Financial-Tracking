@@ -83,25 +83,10 @@ export async function signUp(email, password) {
   if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) throw error;
+  // When email confirmation is ON, data.session is null and the user must
+  // click the Supabase email link, then sign in. When confirmation is OFF,
+  // data.session exists and they are signed in immediately.
   session.set(data.session?.user ?? null);
-
-  // If Supabase returned a confirmation URL, send the user there so the
-  // account can actually be confirmed. Otherwise they'll stay unconfirmed
-  // and the app will treat them as unsigned in.
-    const confirmation = data?.user || {};
-  const url = confirmation.url;
-  const oob_code = confirmation.oob_code;
-  if (url) {
-    if (typeof window !== 'undefined' && window.location && window.location.replace) {
-      window.location.replace(url);
-    }
-  } else if (oob_code) {
-    const confirmUrl = `${url?.split('?')[0] || ''}/auth/v1/verify?guid=${oob_code}`;
-    if (typeof window !== 'undefined' && window.location && window.location.replace) {
-      window.location.replace(confirmUrl);
-    }
-  }
-
   return { user: data.user, needsConfirmation: !data.session };
 }
 
