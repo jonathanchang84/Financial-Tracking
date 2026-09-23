@@ -311,8 +311,6 @@ export const availableBalance = derived([settings, displayCurrency], ([$settings
   convertCurrency(num($settings.balance), $settings.balanceCurrency || 'USD', get(displayCurrency))
 );
 
-  balance: num($settings.balance),
-
 /* ------------------------------------------------------------------ */
 /* Boot + legacy migration                                            */
 /* ------------------------------------------------------------------ */
