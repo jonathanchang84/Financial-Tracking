@@ -1,7 +1,7 @@
 <script>
   /** Supabase Auth gateway: email + password sign in / sign up, or sign out. */
   import Modal from './Modal.svelte';
-  import { cloudEnabled, session, signIn, signUp, signOut } from '../services/supabaseClient.js';
+  import { cloudEnabled, session, signIn, signUp, signOut, resendConfirmation } from '../services/supabaseClient.js';
   import { showToast } from '../stores/ui.js';
 
   let { onClose = () => {} } = $props();
@@ -42,8 +42,24 @@
         onClose();
       }
     } catch (caught) {
-      error = caught.message;
+      error = typeof caught === 'string' ? caught : caught.message;
       needsConfirmation = false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Re-send the confirmation email (Supabase allows 2 per hour by default). */
+  async function resend() {
+    busy = true;
+    error = '';
+    message = '';
+    try {
+      await resendConfirmation(email);
+      message = 'Confirmation email sent again — check your inbox (and spam).';
+      showToast('Confirmation email re-sent');
+    } catch (caught) {
+      error = typeof caught === 'string' ? caught : caught.message;
     } finally {
       busy = false;
     }
@@ -91,8 +107,15 @@
           required
         />
       </label>
-      {#if error}<p class="error">{error}</p>{/if}
-      {#if message}<p class="hint">{message}</p>{/if}
+        {#if error}<p class="error">{error}</p>{/if}
+        {#if message}<p class="hint">{message}</p>{/if}
+        {#if mode === 'signup' && email}
+          <div class="modal-actions">
+            <button class="secondary-button" type="button" disabled={busy} onclick={resend}>
+              Resend confirmation email
+            </button>
+          </div>
+        {/if}
       <div class="modal-actions">
         <button
           class="secondary-button"
