@@ -5,7 +5,7 @@
 #   `wrangler deploy` / `wrangler pages deploy dist` serves ONLY `./dist`.
 #   Never point the asset directory at the project root, or the dev
 #   `/src/main.js` shell ships instead of the hashed `/assets/*` bundle.
-name = "financial-dashboard-pwa"
+name = "financial-tracking"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "dist"
 
