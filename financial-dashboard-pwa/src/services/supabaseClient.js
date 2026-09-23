@@ -110,6 +110,10 @@ export function friendlyAuthError(error) {
   if (status === 429 || /rate limit|too many requests/i.test(message)) {
     return 'Too many attempts in a short time — please wait a minute and try again.';
   }
+  // Supabase project setting: "Allow new users to sign up" is switched off.
+  if (/signups? not allowed|signups? are not allowed|not allowed to sign up/i.test(message)) {
+    return 'New account sign-ups are currently disabled for this app. Please contact the app owner to get an invite.';
+  }
   if (/not authorized/i.test(message)) {
     return 'This email address cannot be used to sign up right now. Please contact the app owner.';
   }
