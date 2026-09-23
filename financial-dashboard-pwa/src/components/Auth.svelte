@@ -1,56 +1,114 @@
 <script>
-  import { fly } from 'svelte/transition';
-  import { supabase } from '../services/supabaseClient.js';
+  /** Supabase Auth gateway: email + password sign in / sign up, or sign out. */
+  import Modal from './Modal.svelte';
+  import { cloudEnabled, session, signIn, signUp, signOut } from '../services/supabaseClient.js';
+  import { showToast } from '../stores/ui.js';
 
-  let { onClose } = $props();
-  let mode = $state('login');
+  let { onClose = () => {} } = $props();
+
+        let mode = $state('login');
   let email = $state('');
   let password = $state('');
   let busy = $state(false);
   let message = $state('');
   let error = $state('');
+  let needsConfirmation = $state(false);
 
-  async function submit(ev) {
-    ev.preventDefault();
-    if (!supabase) { error = 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'; return; }
-    busy = true; error = ''; message = '';
-    try {
+  const user = $derived($session);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!cloudEnabled) {
+      error = 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
+      return;
+    }
+    busy = true;
+    error = '';
+    message = '';
+        try {
       if (mode === 'signup') {
-        const { data, error: err } = await supabase.auth.signUp({ email, password });
-        if (err) throw err;
-        message = data.session ? 'Account created. Signed in.' : 'Check your email to confirm your account.';
-        if (data.session) onClose();
+        const result = await signUp(email, password);
+        if (result.needsConfirmation) {
+          needsConfirmation = true;
+          message = 'Account created — check your email to confirm your address, then sign in.';
+        } else {
+          needsConfirmation = false;
+          showToast('Account created and signed in');
+          onClose();
+        }
       } else {
-        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-        if (err) throw err;
+        await signIn(email, password);
+        showToast('Signed in');
         onClose();
       }
-    } catch (e) {
-      error = e.message;
+    } catch (caught) {
+      error = caught.message;
+      needsConfirmation = false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function doSignOut() {
+    busy = true;
+    try {
+      await signOut();
+      showToast('Signed out');
+      onClose();
     } finally {
       busy = false;
     }
   }
 </script>
 
-<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} transition:fly={{ duration: 160 }}>
-  <section class="modal" role="dialog" aria-modal="true" aria-label={mode === 'login' ? 'Sign in' : 'Create account'}>
-    <div class="section-heading">
-      <div><p class="eyebrow">ACCOUNT</p><h3>{mode === 'login' ? 'Sign in' : 'Create account'}</h3></div>
-      <button class="text-button" onclick={onClose}>Close</button>
+<Modal
+  title={user ? 'Your account' : mode === 'login' ? 'Sign in' : 'Create account'}
+  eyebrow="CLOUD ACCOUNT"
+  subtitle="Sync is optional — the app stays fully functional offline without an account."
+  {onClose}
+>
+  {#if !cloudEnabled}
+    <p class="error">Supabase keys are missing from this build, so cloud sync stays off.</p>
+    <p class="hint">Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file and rebuild.</p>
+  {:else if user}
+    <p class="hint">Signed in as <strong>{user.email}</strong></p>
+    <p class="hint">Rows are stored with owner_id = {user.id.slice(0, 8)}… and protected by row level security.</p>
+    <div class="modal-actions">
+      <button class="secondary-button" type="button" onclick={onClose}>Close</button>
+      <button class="danger-button" type="button" disabled={busy} onclick={doSignOut}>Sign out</button>
     </div>
+  {:else}
     <form onsubmit={submit}>
-      <label>Email<input type="email" name="email" bind:value={email} required autocomplete="email"></label>
-      <label>Password<input type="password" name="password" bind:value={password} required minlength="6" autocomplete={mode === 'login' ? 'current-password' : 'new-password'}></label>
+      <label>Email
+        <input type="email" bind:value={email} autocomplete="email" required />
+      </label>
+      <label>Password
+        <input
+          type="password"
+          bind:value={password}
+          minlength="6"
+          autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+          required
+        />
+      </label>
       {#if error}<p class="error">{error}</p>{/if}
-      {#if message}<p class="muted">{message}</p>{/if}
+      {#if message}<p class="hint">{message}</p>{/if}
       <div class="modal-actions">
-        <button type="button" class="secondary-button" onclick={() => { mode = mode === 'login' ? 'signup' : 'login'; error = ''; message = ''; }}>
+        <button
+          class="secondary-button"
+          type="button"
+          onclick={() => {
+            mode = mode === 'login' ? 'signup' : 'login';
+            error = '';
+            message = '';
+          }}
+        >
           {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
         </button>
-        <button type="submit" class="primary-button" disabled={busy}>{mode === 'login' ? 'Sign in' : 'Sign up'}</button>
+        <button class="primary-button" type="submit" disabled={busy}>
+          {mode === 'login' ? 'Sign in' : 'Sign up'}
+        </button>
       </div>
     </form>
-    <p class="muted">Sync is optional — the app stays fully functional offline without an account.</p>
-  </section>
-</div>
+  {/if}
+</Modal>

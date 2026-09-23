@@ -1,65 +1,168 @@
 <script>
-  import { fly } from 'svelte/transition';
-  import { displayCurrency, convertToDisplay, runReport, money } from '../stores/finance.js';
+  /** Local JSON export/import plus the optional Supabase push/pull controls. */
+  import Modal from './Modal.svelte';
+  import { session, cloudEnabled } from '../services/supabaseClient.js';
+  import { syncStatus, syncDetail, pendingCount, lastSyncedAt, syncNow } from '../services/syncEngine.js';
+  import {
+    downloadBackup,
+    restoreBackup,
+    readBackupFile,
+    summariseBackup,
+    pushAllToCloud,
+    pullAllFromCloud
+  } from '../services/backup.js';
+  import { showToast, errorToast } from '../stores/ui.js';
 
-  let { onClose } = $props();
-  let busy = $state(false);
-  let error = $state('');
+  let { onClose = () => {} } = $props();
 
-  async function exportBackup(ev) {
-    ev.preventDefault();
-    busy = true;
-    error = '';
+  let busy = $state('');
+  let status = $state('');
+  let selected = $state(null);
+
+  async function exportLocal() {
+    busy = 'export';
+    status = '';
     try {
-      await exportLocalBackup();
-      const { exportAll } = await import('../services/backup.js');
-      await exportAll();
-    } catch (e) {
-      error = e.message;
+      const filename = await downloadBackup();
+      status = `Backup exported as ${filename}.`;
+      showToast('Backup exported locally');
+    } catch (error) {
+      errorToast(`Export failed: ${error.message}`);
     } finally {
-      busy = false;
+      busy = '';
     }
   }
 
-  async function importBackup(ev) {
-    const file = ev.target.files?.[0];
+  async function chooseFile(event) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
     if (!file) return;
-    if (!confirm('Restore this backup? It will replace current local data.')) return;
-    busy = true;
-    error = '';
     try {
-      const { importAll } = await import('../services/backup.js');
-      const report = await importAll(file);
-      error = '';
-      alert(`Restored: ${report.entities} records, ${report.settings} settings.`);
-      location.reload();
-    } catch (e) {
-      error = e.message;
-    } finally {
-      busy = false;
-      ev.target.value = '';
+      const parsed = await readBackupFile(file);
+      selected = { file, backup: parsed, summary: summariseBackup(parsed) };
+      status = `Ready to restore ${selected.summary.entities} record(s) and ${selected.summary.settings} setting(s)${
+        parsed.exportedAt ? ` from ${new Date(parsed.exportedAt).toLocaleString()}` : ''
+      }.`;
+    } catch (error) {
+      selected = null;
+      errorToast(error.message);
     }
   }
 
-  async function exportLocalBackup() {
-    // kept for backwards-compat path; real implementation lives in backup.js
+  async function confirmRestore() {
+    if (!selected) return;
+    if (!window.confirm('Restore this backup? It replaces the local data on this device.')) return;
+    busy = 'restore';
+    try {
+      const report = await restoreBackup(selected.backup);
+      status = `Restored ${report.entities} record(s) and ${report.settings} setting(s).`;
+      selected = null;
+      showToast('Backup restored');
+    } catch (error) {
+      errorToast(`Restore failed: ${error.message}`);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function pushAll() {
+    busy = 'push';
+    try {
+      const result = await pushAllToCloud();
+      status = result.skipped
+        ? 'Sign in and go online to push to the cloud.'
+        : `Pushed ${result.pushed} record(s)${result.failed ? `, ${result.failed} failed` : ''}.`;
+      showToast('Cloud push finished');
+    } catch (error) {
+      errorToast(error.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function pullAll() {
+    busy = 'pull';
+    try {
+      const result = await pullAllFromCloud();
+      status = result.skipped ? 'Sign in and go online to pull from the cloud.' : `Pulled ${result.pulled} record(s).`;
+      showToast('Cloud pull finished');
+    } catch (error) {
+      errorToast(error.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function syncEverything() {
+    busy = 'sync';
+    try {
+      const result = await syncNow();
+      status = `Pushed ${result.pushed ?? 0}, pulled ${result.pulled ?? 0}.`;
+      showToast('Sync complete');
+    } catch (error) {
+      errorToast(error.message);
+    } finally {
+      busy = '';
+    }
   }
 </script>
 
-<div class="modal-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }} transition:fly={{ duration: 160 }}>
-  <section class="modal" role="dialog" aria-modal="true" aria-label="Backup and restore">
-    <div class="section-heading">
-      <div><p class="eyebrow">DATA CONTROL</p><h3>Backup and restore</h3></div>
-      <button class="text-button" onclick={onClose}>Close</button>
+<Modal title="Backup and restore" eyebrow="DATA CONTROL" onClose={onClose}>
+  <p class="muted">
+    Your data never leaves this device unless you export it or sign in for cloud sync. Everything works
+    offline; queued writes push themselves when connectivity and a session are both available.
+  </p>
+
+  <div class="button-row" style="margin-top:10px">
+    <button class="primary-button" type="button" disabled={busy === 'export'} onclick={exportLocal}>
+      Export JSON backup
+    </button>
+    <label class="secondary-button file-button">
+      Choose backup file
+      <input type="file" accept="application/json" onchange={chooseFile} />
+    </label>
+  </div>
+
+  {#if selected}
+    <div class="panel" style="margin-top:12px">
+      <p class="hint">
+        {selected.summary.entities} records · {selected.summary.settings} settings · {selected.summary.stores} store(s)
+      </p>
+      <div class="button-row">
+        <button class="primary-button" type="button" disabled={busy === 'restore'} onclick={confirmRestore}>
+          Restore and replace local data
+        </button>
+        <button class="secondary-button" type="button" onclick={() => (selected = null)}>Cancel</button>
+      </div>
     </div>
-    <p class="muted">Your data never leaves this device unless you export it yourself.</p>
-    {#if error}<p class="error">{error}</p>{/if}
-    <div class="button-row">
-      <button class="primary-button" disabled={busy} onclick={exportBackup}>Export backup</button>
-      <label class="secondary-button file-button">Import backup
-        <input type="file" accept="application/json" onchange={importBackup} disabled={busy}>
-      </label>
+  {/if}
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:16px 0" />
+
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">CLOUD SYNC</p>
+      <h3>{cloudEnabled ? 'Supabase connected' : 'Local only'}</h3>
+      <p class="hint">{$syncStatus}{$syncDetail ? ` · ${$syncDetail}` : ''}</p>
     </div>
-    <p class="muted">Exports include every local store plus optional Supabase rows when signed in.</p>
-  </section>
-</div>
+    <span class="badge">{cloudEnabled ? ($session ? 'signed in' : 'no session') : 'unconfigured'}</span>
+  </div>
+
+  <p class="hint">
+    Pending writes: {$pendingCount}{$lastSyncedAt ? ` · last sync ${new Date($lastSyncedAt).toLocaleTimeString()}` : ''}
+  </p>
+
+  <div class="button-row" style="margin-top:10px">
+    <button class="secondary-button" type="button" disabled={!cloudEnabled || busy === 'push'} onclick={pushAll}>
+      Push all to cloud
+    </button>
+    <button class="secondary-button" type="button" disabled={!cloudEnabled || busy === 'pull'} onclick={pullAll}>
+      Pull from cloud
+    </button>
+    <button class="primary-button" type="button" disabled={!cloudEnabled || busy === 'sync'} onclick={syncEverything}>
+      Sync now
+    </button>
+  </div>
+
+  {#if status}<p class="hint" style="margin-top:8px">{status}</p>{/if}
+</Modal>

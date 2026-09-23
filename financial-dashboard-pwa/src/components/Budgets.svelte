@@ -1,55 +1,131 @@
 <script>
-  import { budgets, displayCurrency, money, convertCurrency, RATES } from '../stores/finance.js';
-  import { codeOf, destroy, newId, num, persist } from '../services/recordHelpers.js';
+  /**
+   * Budgets — historic rules: remaining room is `limit - spent`, never negative,
+   * and the progress bar tops out at 100% while over-budget cards turn red.
+   */
+  import { budgets, displayCurrency, money, convertCurrency, RATES, CURRENCY_NAMES } from '../stores/finance.js';
+  import { saveBudget, confirmDelete } from '../services/commands.js';
+  import { num } from '../services/runway.js';
+  import { showToast, errorToast } from '../stores/ui.js';
+  import CurrencySelect from './CurrencySelect.svelte';
 
-  const codes = Object.keys(RATES || { USD: 1 });
-  let form = { name: '', limit: '', spent: '0', currency: 'USD' };
-  let message = '';
+  const codes = Object.keys(RATES);
 
-  $: rows = $budgets || [];
-  function left(row) { return Math.max(0, num(row.limit) - num(row.spent)); }
-  function pct(row) { return Math.min(100, num(row.limit) ? (num(row.spent) / num(row.limit)) * 100 : 0); }
+  let form = $state({ name: '', limit: '', spent: '0', currency: 'USD' });
+  let editingId = $state(null);
+  let busy = $state(false);
 
-  async function onSubmit(event) {
-    event.preventDefault();
-    if (!form.name.trim() || !(num(form.limit) > 0)) { message = 'Name and monthly limit are required.'; return; }
-    await persist(budgets, { id: newId(), name: form.name.trim(), limit: num(form.limit), spent: num(form.spent), currency: form.currency, currencyCode: form.currency });
+  const rows = $derived(
+    [...$budgets].map((row) => {
+      const limit = num(row.limit);
+      const spent = num(row.spent);
+      return {
+        ...row,
+        limit,
+        spent,
+        left: Math.max(0, limit - spent),
+        percent: Math.min(100, limit ? (spent / limit) * 100 : 0),
+        over: spent > limit
+      };
+    })
+  );
+
+  function reset() {
     form = { name: '', limit: '', spent: '0', currency: form.currency };
-    message = 'Budget saved locally.';
+    editingId = null;
   }
 
-  async function remove(id) {
-    if (!confirm('Remove this budget?')) return;
-    await destroy(budgets, id);
+  function startEdit(row) {
+    editingId = row.id;
+    form = {
+      name: row.name,
+      limit: String(num(row.limit)),
+      spent: String(num(row.spent)),
+      currency: row.currency || row.currencyCode || 'USD'
+    };
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    busy = true;
+    try {
+      await saveBudget({
+        id: editingId,
+        name: form.name,
+        limit: form.limit,
+        spent: form.spent,
+        currency: form.currency
+      });
+      reset();
+    } catch (error) {
+      errorToast(error.message);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function remove(row) {
+    const removed = await confirmDelete('budgets', row.id, `Remove the “${row.name}” budget?`);
+    if (removed && editingId === row.id) reset();
   }
 </script>
 
 <section class="fh-grid">
-  <div>
-    <p class="eyebrow">BUDGETS</p>
-    <h2>Monthly safety targets</h2>
-    <p class="muted">{message} Remaining room is limit minus spent. Amounts below are also shown in {$displayCurrency}.</p>
+  <div class="view-heading">
+    <div>
+      <p class="eyebrow">BUDGETS</p>
+      <h2>Monthly safety targets</h2>
+      <p class="muted">
+        Set a monthly limit and track how much room remains. Amounts stay in their own currency and are
+        also shown in {$displayCurrency}.
+      </p>
+    </div>
+    <CurrencySelect compact />
   </div>
-  <form class="panel fh-form" on:submit={onSubmit}>
-    <label>Budget name<input bind:value={form.name} placeholder="Essentials" required /></label>
-    <label>Monthly limit<input bind:value={form.limit} inputmode="decimal" required /></label>
-    <label>Already spent<input bind:value={form.spent} inputmode="decimal" /></label>
-    <label>Currency<select bind:value={form.currency}>{#each codes as code}<option>{code}</option>{/each}</select></label>
-    <button class="primary-button" type="submit">Save budget</button>
-  </form>
+
+  <section class="panel">
+    <form class="fh-form" onsubmit={submit}>
+      <label>Budget name<input bind:value={form.name} placeholder="Essentials" required /></label>
+      <label>Monthly limit<input type="number" step="0.01" min="0" bind:value={form.limit} required /></label>
+      <label>Already spent<input type="number" step="0.01" min="0" bind:value={form.spent} /></label>
+      <label>Currency
+        <select bind:value={form.currency}>
+          {#each codes as code}<option value={code}>{code} · {CURRENCY_NAMES[code] ?? code}</option>{/each}
+        </select>
+      </label>
+      <button class="primary-button" type="submit" disabled={busy}>
+        {editingId ? 'Save budget' : 'Add budget'}
+      </button>
+      {#if editingId}
+        <button class="secondary-button" type="button" onclick={reset}>Cancel edit</button>
+      {/if}
+    </form>
+  </section>
+
   <div class="fh-metrics">
     {#each rows as row (row.id)}
       <article class="fh-metric">
         <p class="eyebrow">MONTHLY TARGET</p>
         <h3>{row.name}</h3>
-        <strong>{money(left(row), codeOf(row))} left</strong>
-        <p class="muted">{money(convertCurrency(left(row), codeOf(row), $displayCurrency), $displayCurrency)} in {$displayCurrency}</p>
-        <div class="progress"><span style="width:{pct(row)}%"></span></div>
-        <p class="muted">{money(num(row.spent), codeOf(row))} used of {money(num(row.limit), codeOf(row))}</p>
-        <button class="text-button" type="button" on:click={() => remove(row.id)}>Remove</button>
+        <strong class={row.over ? 'negative' : ''}>{money(row.left, row.currency || 'USD')} left</strong>
+        <p class="hint">
+          {money(convertCurrency(row.left, row.currency || 'USD', $displayCurrency), $displayCurrency)} in
+          {$displayCurrency}
+        </p>
+        <div class="progress" class:over={row.over}>
+          <span style="width:{row.percent}%"></span>
+        </div>
+        <p class="hint">
+          {money(row.spent, row.currency || 'USD')} used of {money(row.limit, row.currency || 'USD')}
+          {#if row.over} · over budget{/if}
+        </p>
+        <div class="button-row" style="margin-top:6px">
+          <button class="text-button" type="button" onclick={() => startEdit(row)}>Edit</button>
+          <button class="text-button danger" type="button" onclick={() => remove(row)}>Remove</button>
+        </div>
       </article>
     {:else}
-      <p class="muted">No budgets yet.</p>
+      <p class="muted">No budgets yet. Add a safety target above.</p>
     {/each}
   </div>
 </section>

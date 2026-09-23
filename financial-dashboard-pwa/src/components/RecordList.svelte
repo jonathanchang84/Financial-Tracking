@@ -1,11 +1,19 @@
 <script>
-  export let rows = [];
-  export let onEdit = null;
-  export let onDelete = null;
-  export let emptyMessage = 'No records yet.';
+  /**
+   * Generic list renderer used by the position, investment and pension screens.
+   * `rows` items: { id, title, subtitle, amount, badges?: string[], raw }.
+   */
+  let {
+    rows = [],
+    emptyMessage = 'No records yet.',
+    onEdit = null,
+    onUpdate = null,
+    onDelete = null,
+    amountClass = ''
+  } = $props();
 </script>
 
-{#if rows.length === 0}
+{#if !rows.length}
   <p class="muted">{emptyMessage}</p>
 {:else}
   <div class="stack-list">
@@ -13,54 +21,28 @@
       <div class="stack-row">
         <span>
           <strong>{row.title}</strong>
-          <small>{row.subtitle}</small>
+          {#if row.subtitle}<small>{row.subtitle}</small>{/if}
+          {#if row.badges?.length}
+            <span class="button-row" style="margin-top:4px">
+              {#each row.badges as badge}
+                <span class="badge {badge.tone || ''}">{badge.label}</span>
+              {/each}
+            </span>
+          {/if}
         </span>
         <span>
-          {#if row.amount}<strong>{row.amount}</strong>{/if}
+          {#if row.amount}<strong class={amountClass}>{row.amount}</strong>{/if}
+          {#if onUpdate}
+            <button class="text-button" type="button" onclick={() => onUpdate(row.raw)}>Update</button>
+          {/if}
           {#if onEdit}
-            <button class="text-button" type="button" on:click={() => onEdit(row.raw)}>Edit</button>
+            <button class="text-button" type="button" onclick={() => onEdit(row.raw)}>Edit</button>
           {/if}
           {#if onDelete}
-            <button class="text-button danger" type="button" on:click={() => onDelete(row.raw)}>Delete</button>
+            <button class="text-button danger" type="button" onclick={() => onDelete(row.raw)}>Delete</button>
           {/if}
         </span>
       </div>
     {/each}
   </div>
 {/if}
-
-<style>
-  .stack-list {
-    display: flex;
-    flex-direction: column;
-  }
-  .stack-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .stack-row:last-child {
-    border-bottom: none;
-  }
-  .stack-row span:first-child {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .stack-row small {
-    color: var(--muted);
-    font-size: 0.78rem;
-  }
-  .stack-row span:last-child {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    white-space: nowrap;
-  }
-  .muted {
-    color: var(--muted);
-  }
-</style>

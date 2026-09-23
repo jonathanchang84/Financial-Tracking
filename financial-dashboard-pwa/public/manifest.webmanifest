@@ -1,18 +1,33 @@
 {
   "name": "Financial Dashboard",
   "short_name": "FinDash",
-  "description": "Offline-first personal finance dashboard.",
+  "description": "Offline-first personal finance dashboard with optional Supabase sync.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0f1115",
-  "theme_color": "#0f1115",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#f6f7f9",
+  "theme_color": "#0f766e",
+  "categories": ["finance", "productivity"],
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    { "name": "Cash flow", "url": "/#cashflow" },
+    { "name": "Overview", "url": "/#dashboard" }
   ]
 }
+

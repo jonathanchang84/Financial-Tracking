@@ -1,42 +1,17 @@
 <script>
-  import { displayCurrency, CURRENCIES, setDisplayCurrency } from '../stores/finance.js';
-  export let id = '';
-  export let label = 'Currency';
-  export let compact = false;
+  /** Global display-currency selector: drives every dashboard's formatting. */
+  import { displayCurrency, setDisplayCurrency, RATES, CURRENCY_NAMES } from '../stores/finance.js';
 
-  function onChange(e) {
-    setDisplayCurrency(e.target.value);
-  }
+  let { label = 'View currency', compact = false, id = '' } = $props();
+
+  const codes = Object.keys(RATES);
 </script>
 
 <label class:compact for={id || undefined}>
   {#if !compact}{label}{/if}
-  <select {id} value={$displayCurrency} on:change={onChange}>
-    {#each CURRENCIES as code}
-      <option value={code}>{code}</option>
+  <select {id} value={$displayCurrency} onchange={(event) => setDisplayCurrency(event.currentTarget.value)}>
+    {#each codes as code}
+      <option value={code}>{compact ? code : `${code} · ${CURRENCY_NAMES[code] ?? code}`}</option>
     {/each}
   </select>
 </label>
-
-<style>
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-  label.compact {
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-  }
-  select {
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 8px 10px;
-    font: inherit;
-  }
-</style>

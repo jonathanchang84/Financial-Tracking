@@ -1,0 +1,9 @@
+# Cloudflare Pages project configuration.
+# Deploy with: npm run deploy   (or connect the Git repo in the Pages dashboard)
+name = "financial-dashboard-pwa"
+compatibility_date = "2025-01-01"
+pages_build_output_dir = "dist"
+
+# Free-tier friendly: pure static assets, no Functions, no cron, no Durable Objects.
+# Build command: npm run build
+# Build output directory: dist

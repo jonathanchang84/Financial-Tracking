@@ -3,18 +3,25 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "Offline-first Svelte/Vite financial dashboard with optional Supabase cloud sync.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.js",
+    "validate": "npm run test && npm run build",
+    "deploy": "npm run build && wrangler pages deploy dist"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.4",
-    "svelte": "^5.0.0"
+    "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "svelte": "^5.57.1",
     "vite": "^5.4.8"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "allowScripts": {
     "esbuild@0.21.5": true

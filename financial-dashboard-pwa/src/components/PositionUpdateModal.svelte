@@ -1,174 +1,184 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  /**
+   * Add / edit / update records for Accounts, Investments and Pensions.
+   *
+   * `mode: 'version'` renders the historic series-name picker: choosing an
+   * existing name attaches the snapshot to that series' chain, so two series
+   * never blur together (a series is a name + currency pair).
+   */
   import Modal from './Modal.svelte';
-  import { CURRENCIES, money } from '../stores/finance.js';
+  import { RATES, CURRENCY_NAMES } from '../stores/finance.js';
+  import { todayISO } from '../services/recordHelpers.js';
+  import { errorToast } from '../stores/ui.js';
 
-  export let title = 'Update value';
-  export let mode = 'snapshot'; // 'snapshot' = edit stored snapshot; 'entry' = replace current value
-  export let subjectLabel = 'Series name';
-  export let subject = '';
-  export let seriesOptions = [];
-  export let date = '';
-  export let value = '';
-  export let currency = 'USD';
-  export let currencyEditable = true;
-  export let detail = '';
-  export let onSubmit = () => {};
-  export let onDelete = null;
+  let {
+    entityKey = 'netWorth',
+    mode = 'create',
+    record = null,
+    seriesOptions = [],
+    defaultCurrency = 'USD',
+    onSubmit = null,
+    onClose = () => {}
+  } = $props();
 
-  const dispatch = createEventDispatcher();
+  const LABELS = {
+    netWorth: { noun: 'account', name: 'Account name', value: 'Current value', create: 'Add account' },
+    holdings: { noun: 'holding', name: 'Holding name', value: 'Unit price', create: 'Add holding' },
+    pensions: { noun: 'pension pot', name: 'Pot name', value: 'Current value', create: 'Add pension pot' }
+  };
 
-  let localSubject = subject;
-  let localDate = date || new Date().toISOString().slice(0, 10);
-  let localValue = value;
-  let localCurrency = currency;
+  const labels = $derived(LABELS[entityKey] ?? LABELS.netWorth);
+  const codes = Object.keys(RATES);
+  const isHolding = $derived(entityKey === 'holdings');
+  const isFormMode = $derived(mode === 'create' || mode === 'edit');
 
-  $: if (seriesOptions.length && !seriesOptions.includes(localSubject) && !localSubject) {
-    localSubject = seriesOptions[0];
+  function initialForm() {
+    // svelte-ignore state_referenced_locally
+    const source = record;
+    // svelte-ignore state_referenced_locally
+    const currencyFallback = defaultCurrency;
+    // svelte-ignore state_referenced_locally
+    const holding = entityKey === 'holdings';
+    const sourceValue = holding ? source?.price : source?.value;
+    return {
+      name: source?.name || source?.series || '',
+      institution: source?.institution || '',
+      provider: source?.provider || '',
+      symbol: source?.symbol || '',
+      type: source?.type || '',
+      kind: source?.kind || 'Asset',
+      quantity: source?.quantity != null ? String(source.quantity) : '',
+      price: source?.price != null ? String(source.price) : '',
+      value: sourceValue != null ? String(sourceValue) : '',
+      date: source?.date || source?.validFrom || todayISO(),
+      currency: source?.currencyCode || source?.currency || currencyFallback
+    };
   }
 
-  function cancel() {
-    dispatch('close');
-  }
+  let form = $state(initialForm());
+  let busy = $state(false);
 
-  function remove() {
-    if (onDelete) onDelete();
-    dispatch('close');
-  }
+    const title = $derived(
+    mode === 'create'
+      ? labels.create
+      : mode === 'edit'
+        ? `Edit ${labels.noun}`
+        : mode === 'version'
+          ? 'Update snapshot'
+          : `Update ${isHolding ? 'unit price' : 'value'}`
+  );
 
-  function submit() {
-    const parsed = Number(localValue);
-    if (!localSubject.trim() || Number.isNaN(parsed)) return;
-    onSubmit({
-      series: localSubject.trim(),
-      date: localDate,
-      value: parsed,
-      currency: localCurrency
-    });
-    dispatch('close');
+  const subtitle = $derived(
+    isFormMode
+      ? mode === 'create'
+        ? 'Adding a record also opens its first dated snapshot.'
+        : 'Descriptive fields only — dated snapshots stay untouched.'
+      : mode === 'version'
+        ? 'Pick an existing series name to keep its history separate.'
+        : 'A dated snapshot is recorded under this series.'
+  );
+
+  const submitLabel = $derived(
+    mode === 'create'
+      ? labels.create
+      : mode === 'edit'
+        ? `Save ${labels.noun}`
+        : mode === 'version'
+          ? 'Update snapshot'
+          : 'Update'
+  );
+
+  function submit(event) {
+    event.preventDefault();
+    const payload = { ...form };
+    if (!String(payload.name || '').trim()) {
+      errorToast(`Give the ${labels.noun} a name`);
+      return;
+    }
+    if (!isFormMode && String(payload.value ?? '').trim() === '') {
+      errorToast('Enter a valid value');
+      return;
+    }
+    busy = true;
+    try {
+      onSubmit?.(payload);
+      onClose();
+    } catch (error) {
+      errorToast(error.message);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
-<Modal {title} on:close>
-  <form
-    on:submit|preventDefault={submit}
-  >
-    {#if mode === 'snapshot' && seriesOptions.length}
-      <label>
-        {subjectLabel}
-        <input
-          list="series-options"
-          bind:value={localSubject}
-          placeholder="Pick an existing name or type a new one"
-          required
-        />
-        <datalist id="series-options">
-          {#each seriesOptions as option}
-            <option value={option}></option>
-          {/each}
-        </datalist>
+<Modal {title} eyebrow="POSITION UPDATE" {subtitle} {onClose}>
+  <form onsubmit={submit}>
+    {#if isFormMode}
+      <label>{labels.name}
+        <input bind:value={form.name} placeholder="Barclays savings" required />
       </label>
+      {#if entityKey === 'netWorth'}
+        <label>Institution<input bind:value={form.institution} placeholder="Barclays" /></label>
+        <label>Kind
+          <select bind:value={form.kind}>
+            <option value="Asset">Asset</option>
+            <option value="Liability">Liability</option>
+          </select>
+        </label>
+        <label>{labels.value}<input type="number" step="0.01" bind:value={form.value} required /></label>
+      {:else if isHolding}
+        <label>Symbol<input bind:value={form.symbol} placeholder="VUSA" /></label>
+        <label>Asset type<input bind:value={form.type} placeholder="ETF" /></label>
+        <label>Quantity<input type="number" step="0.0001" bind:value={form.quantity} required /></label>
+        <label>Unit price<input type="number" step="0.01" bind:value={form.price} required /></label>
+      {:else}
+        <label>Provider<input bind:value={form.provider} placeholder="Provider" /></label>
+        <label>{labels.value}<input type="number" step="0.01" bind:value={form.value} required /></label>
+      {/if}
+      <label>Snapshot date<input type="date" bind:value={form.date} required /></label>
+    {:else if mode === 'version'}
+      <label>Series name
+        {#if seriesOptions.length}
+          <input
+            list="position-series"
+            bind:value={form.name}
+            placeholder="Pick an existing name or type a new one"
+            required
+          />
+          <datalist id="position-series">
+            {#each seriesOptions as option}<option value={option}></option>{/each}
+          </datalist>
+        {:else}
+          <input bind:value={form.name} placeholder="Series name" required />
+        {/if}
+      </label>
+      <label>Snapshot date<input type="date" bind:value={form.date} required /></label>
+      <label>Value<input type="number" step="0.01" bind:value={form.value} required /></label>
     {:else}
-      <label>
-        {subjectLabel}
-        <input bind:value={localSubject} placeholder={subject || 'Series name'} required />
+      <label>Name<input value={record?.name || record?.series || ''} disabled /></label>
+      <label>Date<input type="date" bind:value={form.date} required /></label>
+      <label>{isHolding ? 'Unit price on this date' : 'Value on this date'}
+        <input type="number" step="0.01" bind:value={form.value} required />
       </label>
     {/if}
 
-    <label>
-      Date
-      <input type="date" bind:value={localDate} required />
-    </label>
-
-    <label>
-      {mode === 'entry' ? 'New value (replaces current, records dated snapshot)' : 'Value'}
-      <input type="number" step="0.01" bind:value={localValue} required />
-    </label>
-
-    <label>
-      Currency
-      <select bind:value={localCurrency} disabled={!currencyEditable}>
-        {#each CURRENCIES as code}
-          <option value={code}>{code}</option>
-        {/each}
+    <label>Currency
+      <select bind:value={form.currency}>
+        {#each codes as code}<option value={code}>{code} · {CURRENCY_NAMES[code] ?? code}</option>{/each}
       </select>
     </label>
 
-    {#if detail}
-      <p class="hint">{detail}</p>
-    {/if}
-    {#if mode === 'snapshot'}
+    {#if !isFormMode}
       <p class="hint">
-        {money(localValue, localCurrency)} · picking an existing name keeps that series separate from
-        others.
+        Saving closes the open version with a validTo date and makes this the current version.
       </p>
     {/if}
 
     <div class="modal-actions">
-      <button class="secondary-button" type="button" on:click={cancel}>Cancel</button>
-      {#if onDelete}
-        <button class="danger-button" type="button" on:click={remove}>Delete</button>
-      {/if}
-      <button class="primary-button" type="submit">Save</button>
+      <button class="secondary-button" type="button" onclick={onClose}>Cancel</button>
+      <button class="primary-button" type="submit" disabled={busy}>{submitLabel}</button>
     </div>
   </form>
 </Modal>
 
-<style>
-  form {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-  input,
-  select {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 9px 10px;
-    font: inherit;
-  }
-  .hint {
-    font-size: 0.78rem;
-    color: var(--muted);
-    margin: 0;
-  }
-  .modal-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    margin-top: 4px;
-  }
-  .secondary-button,
-  .primary-button,
-  .danger-button {
-    border-radius: 8px;
-    padding: 9px 14px;
-    font: inherit;
-    cursor: pointer;
-    border: 1px solid var(--line);
-  }
-  .secondary-button {
-    background: transparent;
-    color: var(--text);
-  }
-  .primary-button {
-    background: var(--accent, #4ade80);
-    border-color: transparent;
-    color: #06210f;
-    font-weight: 600;
-  }
-  .danger-button {
-    background: transparent;
-    color: #f87171;
-    border-color: #f87171;
-  }
-</style>
+

@@ -148,4 +148,137 @@ create table if not exists public.settings (
   value jsonb,
   pending_sync boolean default false,
   updated_at timestamptz default now()
+
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS)
+-- ============================================================
+
+alter table public.net_worth_entries enable row level security;
+alter table public.net_worth_history enable row level security;
+alter table public.holdings enable row level security;
+alter table public.portfolio_history enable row level security;
+alter table public.pensions enable row level security;
+alter table public.pension_history enable row level security;
+alter table public.bills enable row level security;
+alter table public.commitments enable row level security;
+alter table public.transactions enable row level security;
+alter table public.budgets enable row level security;
+alter table public.settings enable row level security;
+
+create policy "authenticated users may read their own net_worth_entries"
+on public.net_worth_entries for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own net_worth_entries"
+on public.net_worth_entries for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own net_worth_history"
+on public.net_worth_history for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own net_worth_history"
+on public.net_worth_history for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own holdings"
+on public.holdings for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own holdings"
+on public.holdings for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own portfolio_history"
+on public.portfolio_history for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own portfolio_history"
+on public.portfolio_history for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own pensions"
+on public.pensions for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own pensions"
+on public.pensions for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own pension_history"
+on public.pension_history for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own pension_history"
+on public.pension_history for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own bills"
+on public.bills for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own bills"
+on public.bills for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own commitments"
+on public.commitments for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own commitments"
+on public.commitments for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own transactions"
+on public.transactions for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own transactions"
+on public.transactions for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own budgets"
+on public.budgets for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own budgets"
+on public.budgets for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+create policy "authenticated users may read their own settings"
+on public.settings for select
+to authenticated using (auth.uid() = owner_id);
+
+create policy "authenticated users may manage their own settings"
+on public.settings for all
+to authenticated using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+-- ============================================================
+-- INDEXES
+-- ============================================================
+
+create index if not exists idx_net_worth_entries_owner on public.net_worth_entries(owner_id);
+create index if not exists idx_net_worth_history_owner_current on public.net_worth_history(owner_id, current_flag);
+create index if not exists idx_holdings_owner on public.holdings(owner_id);
+create index if not exists idx_portfolio_history_owner_current on public.portfolio_history(owner_id, current_flag);
+create index if not exists idx_pensions_owner on public.pensions(owner_id);
+create index if not exists idx_pension_history_owner_current on public.pension_history(owner_id, current_flag);
+create index if not exists idx_bills_owner on public.bills(owner_id);
+create index if not exists idx_commitments_owner on public.commitments(owner_id);
+create index if not exists idx_transactions_owner on public.transactions(owner_id);
+create index if not exists idx_budgets_owner on public.budgets(owner_id);
+create index if not exists idx_settings_owner_key on public.settings(owner_id, key);
+
 );
