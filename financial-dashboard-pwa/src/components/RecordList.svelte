@@ -9,6 +9,7 @@
     onEdit = null,
     onUpdate = null,
     onDelete = null,
+    onTogglePaid = null,
     amountClass = ''
   } = $props();
 </script>
@@ -40,6 +41,11 @@
           {/if}
           {#if onDelete}
             <button class="text-button danger" type="button" onclick={() => onDelete(row.raw)}>Delete</button>
+          {/if}
+          {#if onTogglePaid}
+            <button class:active={row.paid} class="text-button" type="button" onclick={() => onTogglePaid(row)}>
+              {row.paid ? 'Paid' : 'Unpaid'}
+            </button>
           {/if}
         </span>
       </div>

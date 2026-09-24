@@ -3,7 +3,7 @@
  *
  * Ported from the historic `pwa/app.js` `renderCashflow()`:
  *   - one row per day from today through payday, inclusive
- *   - safeToday = max(0, balance - full-cycle obligations) / inclusive day count
+ *   - safeToday = max(0, balance - unpaid cycle obligations) / inclusive day count
  *   - ending = starting - safeToday - Spend Items(today) - scheduled bills(today)
  *   - Saturday / Sunday bill due dates shift forward to Monday
  *
@@ -14,6 +14,7 @@
 import {
   startOfDay,
   dayKey,
+  daysBetween,
   daysBetweenInclusive,
   datesThrough,
   dueDateForBill,
@@ -21,6 +22,7 @@ import {
   longLabel,
   runwayLabel
 } from './dates.js';
+import { isExpensePaid } from './paymentState.js';
 
 /** Historic cap on the rendered grid (the Apple app uses the same guard). */
 export const MAX_RUNWAY_DAYS = 45;
@@ -68,7 +70,13 @@ function billIsDueOn(bill, date) {
   return dayKey(dueDateForBill(bill, previousMonth)) === key;
 }
 
-function obligationTotals({ bills, commitments, currency, start, end, dayCount }) {
+function billOccurrenceMonth(bill, date) {
+  if (dayKey(dueDateForBill(bill, date)) === dayKey(date)) return dayKey(date).slice(0, 7);
+  const previousMonth = new Date(date.getFullYear(), date.getMonth() - 1, 1);
+  return dayKey(previousMonth).slice(0, 7);
+}
+
+function obligationTotals({ bills, commitments, currency, start, end, dayCount, paidExpenses = {} }) {
   const relevantBills = bills.filter((bill) => inCurrency(bill, currency) && bill.active !== false);
   const relevantCommitments = commitments.filter((item) => inCurrency(item, currency));
   let scheduledBills = 0;
@@ -77,17 +85,36 @@ function obligationTotals({ bills, commitments, currency, start, end, dayCount }
   datesThrough(start, end, dayCount).forEach((date) => {
     const key = dayKey(date);
     relevantBills.forEach((bill) => {
-      if (billIsDueOn(bill, date)) scheduledBills += num(bill.amount);
+      const occurrenceMonth = billOccurrenceMonth(bill, date);
+      if (billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, occurrenceMonth)) {
+        scheduledBills += num(bill.amount);
+      }
     });
     relevantCommitments.forEach((item) => {
-      if (dayKey(item.date) === key) scheduledCommitments += num(item.amount);
+      if (
+        dayKey(item.date) === key &&
+        !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
+      ) {
+        scheduledCommitments += num(item.amount);
+      }
     });
   });
 
   return { scheduledBills, scheduledCommitments, total: scheduledBills + scheduledCommitments };
 }
 
-function buildRunwayRows({ start, end, dayCount, amount, safe, bills, commitments, currency, maxDays }) {
+function buildRunwayRows({
+  start,
+  end,
+  dayCount,
+  amount,
+  safe,
+  bills,
+  commitments,
+  currency,
+  maxDays,
+  paidExpenses = {}
+}) {
   const relevantBills = bills.filter((bill) => inCurrency(bill, currency) && bill.active !== false);
   const relevantCommitments = commitments.filter((item) => inCurrency(item, currency));
   const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
@@ -98,11 +125,17 @@ function buildRunwayRows({ start, end, dayCount, amount, safe, bills, commitment
     const key = dayKey(date);
     const starting = running;
     const spendItemsToday = relevantCommitments.reduce(
-      (sum, item) => (dayKey(item.date) === key ? sum + num(item.amount) : sum),
+      (sum, item) =>
+        dayKey(item.date) === key && !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
+          ? sum + num(item.amount)
+          : sum,
       0
     );
     const billsToday = relevantBills.reduce(
-      (sum, bill) => (billIsDueOn(bill, date) ? sum + num(bill.amount) : sum),
+      (sum, bill) =>
+        billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date))
+          ? sum + num(bill.amount)
+          : sum,
       0
     );
 
@@ -137,16 +170,17 @@ export function buildDailyRunway({
   bills = [],
   commitments = [],
   maxDays = MAX_RUNWAY_DAYS,
+  paidExpenses = {},
   today = new Date()
 }) {
   const amount = num(balance);
   const window = runwayWindow(today, payday);
   if (!(amount > 0) || !window) return [];
 
-  const obligations = obligationTotals({ bills, commitments, currency, ...window });
+  const obligations = obligationTotals({ bills, commitments, currency, paidExpenses, ...window });
   const cashAfterPlannedSpend = amount - obligations.total;
   const safe = Math.max(0, cashAfterPlannedSpend) / window.dayCount;
-  return buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays });
+  return buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays, paidExpenses });
 }
 
 /** Build the grid and full-cycle summary figures used by the screens. */
@@ -157,6 +191,7 @@ export function runwayPlanner({
   bills = [],
   commitments = [],
   maxDays = MAX_RUNWAY_DAYS,
+  paidExpenses = {},
   today = new Date()
 }) {
   const amount = num(balance);
@@ -164,12 +199,12 @@ export function runwayPlanner({
   const window = runwayWindow(today, payday);
   const paydayPast = hasPayday && startOfDay(payday) < startOfDay(today);
   const obligations = window
-    ? obligationTotals({ bills, commitments, currency, ...window })
+    ? obligationTotals({ bills, commitments, currency, paidExpenses, ...window })
     : { scheduledBills: 0, scheduledCommitments: 0, total: 0 };
   const cashAfterPlannedSpend = window ? amount - obligations.total : amount;
   const safe = window ? Math.max(0, cashAfterPlannedSpend) / window.dayCount : 0;
   const rows = window && amount > 0
-    ? buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays })
+    ? buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays, paidExpenses })
     : [];
   const dayCount = window?.dayCount || 0;
   const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
@@ -181,6 +216,7 @@ export function runwayPlanner({
     payday: hasPayday ? dayKey(payday) : '',
     paydayPast,
     dayCount,
+    daysUntilPayday: window ? daysBetween(startOfDay(today), startOfDay(payday)) : 0,
     renderedDays: rows.length,
     truncated: dayCount > renderLimit,
     safeToday: safe,

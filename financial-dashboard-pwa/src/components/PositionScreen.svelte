@@ -32,12 +32,15 @@
   } from '../services/positions.js';
   import { isCurrentVersion } from '../services/scd2.js';
   import { num, currencyOf, seriesNameOf } from '../services/runway.js';
+  import { monthlyPensionRate, projectPensionSeries } from '../services/financeCalculations.js';
   import { todayISO } from '../services/recordHelpers.js';
   import { longLabel } from '../services/dates.js';
   import { showToast, errorToast } from '../stores/ui.js';
   import CurrencySelect from './CurrencySelect.svelte';
   import RecordList from './RecordList.svelte';
   import PositionUpdateModal from './PositionUpdateModal.svelte';
+  import HistoryTrend from './HistoryTrend.svelte';
+  import PensionProjection from './PensionProjection.svelte';
 
   // `entityKey` is fixed per instance (App renders one screen per view).
   let { entityKey = 'netWorth' } = $props();
@@ -116,6 +119,25 @@
   const totalInDisplay = $derived(
     Object.entries(totals).reduce((sum, [code, value]) => sum + convertCurrency(value, code, $displayCurrency), 0)
   );
+  const historyPoints = $derived.by(() => {
+    const grouped = new Map();
+    for (const row of $historyStore || []) {
+      const date = String(row.validFrom || row.date || '');
+      if (!date) continue;
+      const value = convertCurrency(num(row.value), currencyOf(row), $displayCurrency);
+      grouped.set(date, (grouped.get(date) || 0) + value);
+    }
+    return Array.from(grouped, ([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
+  });
+  const pensionProjection = $derived(
+    projectPensionSeries({
+      history: $historyStore || [],
+      pots: $store || [],
+      annualRate: num($settings.pensionGrowth),
+      years: 10
+    })
+  );
+  const monthlyPensionRatePercent = $derived((monthlyPensionRate(num($settings.pensionGrowth)) * 100).toFixed(3));
 
   function entityValue(row) {
     return config.kind === 'holding' ? holdingValue(row) : signedValue(row);
@@ -275,6 +297,29 @@
       <button class="primary-button" type="submit">Save snapshot</button>
     </form>
   </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">HISTORY</p>
+        <h3>{entityKey === 'holdings' ? 'Portfolio value over time' : entityKey === 'pensions' ? 'Pension value over time' : 'Net worth over time'}</h3>
+      </div>
+    </div>
+    <HistoryTrend points={historyPoints} title={entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'} />
+  </section>
+
+  {#if entityKey === 'pensions'}
+    <section class="panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">FORECAST</p>
+          <h3>Annual pension projection</h3>
+          <p class="hint">Annual rate {(num($settings.pensionGrowth) * 100).toFixed(2)}% · monthly equivalent {monthlyPensionRatePercent}%.</p>
+        </div>
+      </div>
+      <PensionProjection projection={pensionProjection} />
+    </section>
+  {/if}
 
   <section class="panel">
     <div class="section-heading">

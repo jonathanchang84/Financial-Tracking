@@ -30,7 +30,8 @@
       currency: balanceCurrency,
       payday,
       bills: $bills,
-      commitments: $commitments
+      commitments: $commitments,
+      paidExpenses: $settings.paidExpenses || {}
     })
   );
 
@@ -65,7 +66,7 @@
         <p class="eyebrow">TODAY</p>
         <h2>Your financial picture</h2>
         <p class="muted">
-          Payday {payday ? longLabel(payday) : 'not set'} · {plan.dayCount || 0} day(s) to go · figures in
+          Payday {payday ? longLabel(payday) : 'not set'} · {plan.daysUntilPayday || 0} day(s) until payday · figures in
           {$displayCurrency}
         </p>
       </div>

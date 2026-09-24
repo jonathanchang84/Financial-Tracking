@@ -250,9 +250,14 @@ export const DEFAULT_SETTINGS = {
   balance: 0,
   balanceCurrency: 'USD',
   defaultCurrency: '',
+  paidExpenses: {},
   payday: '',
   portfolioGrowth: 0.05,
   pensionGrowth: 0.05,
+  redundancyPayout: '',
+  redundancyTaxFreeThreshold: 30000,
+  redundancyTaxRate: 0.4,
+  redundancySpends: [5800, 5100, 3800],
   theme: 'light'
 };
 

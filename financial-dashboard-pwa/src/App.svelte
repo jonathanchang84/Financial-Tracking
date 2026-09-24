@@ -10,6 +10,7 @@
   import CashFlow from './components/CashFlow.svelte';
   import PositionScreen from './components/PositionScreen.svelte';
   import Budgets from './components/Budgets.svelte';
+  import Redundancy from './components/Redundancy.svelte';
   import Backup from './components/Backup.svelte';
   import Auth from './components/Auth.svelte';
   import CurrencySelect from './components/CurrencySelect.svelte';
@@ -24,6 +25,7 @@
     { id: 'position', label: 'Position', icon: '◒' },
     { id: 'investments', label: 'Investments', icon: '⌁' },
     { id: 'pensions', label: 'Pensions', icon: '◫' },
+    { id: 'redundancy', label: 'Redundancy', icon: '◇' },
     { id: 'budgets', label: 'Budgets', icon: '◎' }
   ];
 
@@ -117,6 +119,7 @@
       {#if view === 'position'}<PositionScreen entityKey="netWorth" />{/if}
       {#if view === 'investments'}<PositionScreen entityKey="holdings" />{/if}
       {#if view === 'pensions'}<PositionScreen entityKey="pensions" />{/if}
+      {#if view === 'redundancy'}<Redundancy />{/if}
       {#if view === 'budgets'}<Budgets />{/if}
     </main>
 

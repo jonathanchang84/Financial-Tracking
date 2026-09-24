@@ -6,6 +6,7 @@
   import {
     settings,
     saveSettings,
+    saveSetting,
     bills,
     commitments,
     displayCurrency,
@@ -15,6 +16,8 @@
     CURRENCY_NAMES
   } from '../stores/finance.js';
   import { runwayPlanner, num, currencyOf, parseNonNegativeNumber } from '../services/runway.js';
+  import { currentMonthExpenses } from '../services/financeCalculations.js';
+  import { expensePaymentKey, isExpensePaid } from '../services/paymentState.js';
   import { dayKey, longLabel, isValidDate, startOfDay } from '../services/dates.js';
   import { confirmDelete } from '../services/commands.js';
   import { showToast, errorToast } from '../stores/ui.js';
@@ -24,6 +27,7 @@
   import RecordList from './RecordList.svelte';
   import BillModal from './BillModal.svelte';
   import CommitmentModal from './CommitmentModal.svelte';
+  import CurrentMonthExpenses from './CurrentMonthExpenses.svelte';
 
   const codes = Object.keys(RATES);
 
@@ -48,41 +52,75 @@
   });
 
   const balanceCurrency = $derived($settings.balanceCurrency || 'USD');
+  const paidExpenses = $derived($settings.paidExpenses || {});
+  const currentMonthKey = dayKey(new Date()).slice(0, 7);
+  const currentMonthData = $derived(
+    currentMonthExpenses({
+      balance: $settings.balance,
+      currency: balanceCurrency,
+      bills: $bills,
+      commitments: $commitments,
+      paidExpenses
+    })
+  );
+  const currentMonthRows = $derived(new Map((currentMonthData.rows || []).map((row) => [row.paymentKey, row])));
+
   const plan = $derived(
     runwayPlanner({
       balance: $settings.balance,
       currency: balanceCurrency,
       payday: $settings.payday || '',
       bills: $bills,
-      commitments: $commitments
+      commitments: $commitments,
+      paidExpenses
     })
   );
 
   const inDisplay = (value, from = balanceCurrency) =>
     money(convertCurrency(value, from, $displayCurrency), $displayCurrency);
 
+  function currentExpenseRow(row, kind) {
+    const key = kind === 'bill'
+      ? expensePaymentKey(row, new Date(), currentMonthKey)
+      : expensePaymentKey(row, row.date, currentMonthKey);
+    return currentMonthRows.get(key) || {
+      paid: isExpensePaid(row, row.date || new Date(), paidExpenses, currentMonthKey),
+      paymentKey: key
+    };
+  }
+
   const commitmentRows = $derived(
     [...$commitments]
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .map((row) => ({
-        id: row.id,
-        title: row.name || 'Spend item',
-        subtitle: `${longLabel(row.date)} · ${currencyOf(row)}`,
-        amount: money(num(row.amount), currencyOf(row)),
-        raw: row
-      }))
+      .map((row) => {
+        const current = currentExpenseRow(row, 'commitment');
+        return {
+          id: row.id,
+          title: row.name || 'Spend item',
+          subtitle: `${longLabel(row.date)} · ${currencyOf(row)}`,
+          amount: money(num(row.amount), currencyOf(row)),
+          paid: current?.paid === true,
+          paymentKey: current?.paymentKey || expensePaymentKey(row, row.date, currentMonthKey),
+          raw: row
+        };
+      })
   );
 
   const billRows = $derived(
     [...$bills]
       .sort((a, b) => num(a.dueDay) - num(b.dueDay))
-      .map((row) => ({
-        id: row.id,
-        title: row.name || 'Bill',
-        subtitle: `${row.category || 'Bill'} · due day ${num(row.dueDay)} · ${currencyOf(row)}`,
-        amount: money(num(row.amount), currencyOf(row)),
-        raw: row
-      }))
+      .map((row) => {
+        const current = currentExpenseRow(row, 'bill');
+        return {
+          id: row.id,
+          title: row.name || 'Bill',
+          subtitle: `${row.category || 'Bill'} · due day ${num(row.dueDay)} · ${currencyOf(row)}`,
+          amount: money(num(row.amount), currencyOf(row)),
+          paid: current?.paid === true,
+          paymentKey: current?.paymentKey || expensePaymentKey(row, new Date(), currentMonthKey),
+          raw: row
+        };
+      })
   );
 
   // Persist the balance when the field is committed. Invalid drafts are left
@@ -124,6 +162,19 @@
       errorToast(`Could not save settings: ${error.message}`);
     } finally {
       savingCashSettings = false;
+    }
+  }
+
+  async function togglePaid(row) {
+    if (!row?.paymentKey) return;
+    const next = { ...paidExpenses };
+    if (row.paid) delete next[row.paymentKey];
+    else next[row.paymentKey] = true;
+    try {
+      await saveSetting('paidExpenses', next);
+      showToast(row.paid ? 'Marked unpaid' : 'Marked paid');
+    } catch (error) {
+      errorToast(`Could not update payment state: ${error.message}`);
     }
   }
 
@@ -183,10 +234,10 @@
         <p class="hint">After reserving {inDisplay(plan.obligationTotal)} of planned obligations</p>
       </article>
       <article class="fh-metric">
-        <p class="eyebrow">DAYS TO PAYDAY</p>
-        <strong>{plan.dayCount || 0}</strong>
+        <p class="eyebrow">DAYS UNTIL PAYDAY</p>
+        <strong>{plan.daysUntilPayday || 0}</strong>
         <p class="hint">
-          {plan.paydayPast ? 'Payday has passed — choose a future date' : plan.payday ? `Through ${longLabel(plan.payday)}` : 'Set your next payday'}
+          {plan.paydayPast ? 'Payday has passed — choose a future date' : plan.payday ? `Payday ${longLabel(plan.payday)} · ${plan.dayCount || 0} inclusive grid day(s)` : 'Set your next payday'}
           {#if plan.truncated}<br />Grid shows the first {plan.renderedDays} days{/if}
         </p>
       </article>
@@ -201,6 +252,13 @@
         <p class="hint">After safe spend, Spend Items and bills</p>
       </article>
     </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div><p class="eyebrow">CURRENT MONTH</p><h3>Workbook-style expense remainder</h3><p class="hint">Paid rows do not reduce the running remainder; unpaid rows do.</p></div>
+    </div>
+    <CurrentMonthExpenses data={currentMonthData} currency={balanceCurrency} onTogglePaid={togglePaid} />
   </section>
 
   <section class="panel">
@@ -238,6 +296,7 @@
       emptyMessage="No spend items recorded yet."
       onEdit={openCommitment}
       onDelete={removeCommitment}
+      onTogglePaid={togglePaid}
     />
   </section>
 
@@ -255,6 +314,7 @@
       emptyMessage="No recurring bills yet."
       onEdit={openBill}
       onDelete={removeBill}
+      onTogglePaid={togglePaid}
     />
   </section>
 </section>
