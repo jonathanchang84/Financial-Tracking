@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildDailyRunway, runwayPlanner, growthPercent, monthGrowth, latestBySeries, num } from '../src/services/runway.js';
+import { buildDailyRunway, runwayPlanner, growthPercent, monthGrowth, latestBySeries, num, parseNonNegativeNumber } from '../src/services/runway.js';
 
 const base = {
   balance: 900,
@@ -29,16 +29,17 @@ test('safe amount spreads the balance across the cycle and ending lands on zero'
   assert.equal(rows[9].ending, 0, 'spending the safe amount every day leaves nothing');
 });
 
-test('commitments reduce that day and are carried cumulatively', () => {
+test('planned Spend Items reduce that day and are carried cumulatively', () => {
   const rows = buildDailyRunway({
     ...base,
     commitments: [{ name: 'Food shop', date: '2026-03-05', amount: 50, currencyCode: 'USD' }]
   });
   const day = rows.find((row) => row.date === '2026-03-05');
   const next = rows.find((row) => row.date === '2026-03-06');
+  assert.equal(rows[0].safe, 85, 'the 50-pound Spend Item is reserved before daily spending');
   assert.equal(day.commitments, 50);
   assert.equal(day.cumulative, 50);
-  assert.equal(day.ending, 900 - 5 * 90 - 50, 'five safe days (1-5 Mar) plus the commitment');
+  assert.equal(day.ending, 900 - 5 * 85 - 50, 'five safe days plus the Spend Item');
   assert.equal(next.cumulative, 50, 'cumulative persists across days');
   assert.equal(next.starting, day.ending);
 });
@@ -79,7 +80,7 @@ test('missing balance, missing payday or a payday in the past returns no rows', 
   assert.deepEqual(buildDailyRunway({ ...base, payday: '2026-02-01' }), [], 'payday already happened');
 });
 
-test('planner summarises the grid and truncates long cycles at 45 days', () => {
+test('planner summarises the full cycle while truncating only rendered rows', () => {
   const plan = runwayPlanner(base);
   assert.equal(plan.dayCount, 10);
   assert.equal(plan.renderedDays, 10);
@@ -89,11 +90,47 @@ test('planner summarises the grid and truncates long cycles at 45 days', () => {
   assert.equal(plan.scheduledBills, 0);
   assert.equal(plan.scheduledCommitments, 0);
 
-  const longPlan = runwayPlanner({ ...base, balance: 9000, payday: '2026-05-01' });
+  const longPlan = runwayPlanner({
+    ...base,
+    balance: 9000,
+    payday: '2026-05-01',
+    commitments: [{ name: 'Late repair', date: '2026-04-20', amount: 300, currencyCode: 'USD' }]
+  });
   assert.equal(longPlan.dayCount, 62);
   assert.equal(longPlan.renderedDays, 45);
   assert.equal(longPlan.truncated, true);
-  assert.equal(round(longPlan.safeToday), round(9000 / 62), 'safe amount still uses the full cycle');
+  assert.equal(longPlan.scheduledCommitments, 300, 'summary includes an obligation after the rendered cap');
+  assert.equal(round(longPlan.safeToday), round((9000 - 300) / 62));
+  assert.equal(longPlan.projectedAtPayday, 0);
+});
+
+test('runway handles same-day, malformed and past paydays explicitly', () => {
+  const sameDay = runwayPlanner({ ...base, payday: '2026-03-01' });
+  assert.equal(sameDay.dayCount, 1);
+  assert.equal(sameDay.rows.length, 1);
+  assert.equal(sameDay.paydayPast, false);
+
+  const past = runwayPlanner({ ...base, payday: '2026-02-01' });
+  assert.equal(past.dayCount, 0);
+  assert.equal(past.rows.length, 0);
+  assert.equal(past.paydayPast, true);
+
+  const malformed = runwayPlanner({ ...base, payday: 'not-a-date' });
+  assert.equal(malformed.payday, '');
+  assert.equal(malformed.dayCount, 0);
+  assert.equal(malformed.rows.length, 0);
+});
+
+test('obligations larger than the balance produce a visible shortfall and no negative safe target', () => {
+  const plan = runwayPlanner({
+    ...base,
+    balance: 100,
+    commitments: [{ name: 'Major purchase', date: '2026-03-05', amount: 150, currencyCode: 'USD' }]
+  });
+  assert.equal(plan.safeToday, 0);
+  assert.equal(plan.cashAfterPlannedSpend, -50);
+  assert.equal(plan.shortfall, 50);
+  assert.equal(plan.projectedAtPayday, -50);
 });
 
 test('growth helpers match the historic month-on-month wording', () => {
@@ -121,6 +158,17 @@ test('num coerces formatted strings and rejects nonsense', () => {
   assert.equal(num('abc'), 0);
   assert.equal(num(NaN), 0);
   assert.equal(num(12), 12);
+});
+
+test('parseNonNegativeNumber accepts zero and formatted values but rejects invalid drafts', () => {
+  assert.equal(parseNonNegativeNumber(''), null);
+  assert.equal(parseNonNegativeNumber('   '), null);
+  assert.equal(parseNonNegativeNumber(null), null);
+  assert.equal(parseNonNegativeNumber(undefined), null);
+  assert.equal(parseNonNegativeNumber('abc'), null);
+  assert.equal(parseNonNegativeNumber('-1'), null);
+  assert.equal(parseNonNegativeNumber(0), 0);
+  assert.equal(parseNonNegativeNumber('1,234.50'), 1234.5);
 });
 
 function round(value) {

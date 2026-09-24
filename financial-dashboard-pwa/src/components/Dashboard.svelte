@@ -85,15 +85,15 @@
       <p class="hint">Saved balance in {balanceCurrency}</p>
     </article>
     <article class="fh-metric">
-      <p class="eyebrow">SAFE EACH DAY</p>
+      <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
       <strong>{inDisplay(plan.safeToday)}</strong>
-      <p class="hint">Through {payday ? longLabel(payday) : 'payday'}</p>
+      <p class="hint">After planned Spend Items and bills through payday</p>
     </article>
     <article class="fh-metric">
       <p class="eyebrow">PROJECTED AT PAYDAY</p>
       <strong>{inDisplay(plan.projectedAtPayday)}</strong>
       <p class="hint">
-        Commitments {inDisplay(plan.scheduledCommitments)} · bills {inDisplay(plan.scheduledBills)}
+        Spend Items {inDisplay(plan.scheduledCommitments)} · bills {inDisplay(plan.scheduledBills)}
       </p>
     </article>
     <article class="fh-metric">

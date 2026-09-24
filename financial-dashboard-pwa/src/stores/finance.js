@@ -82,11 +82,24 @@ export function money(value, currency = 'USD') {
   }
 }
 
-/** Selected display currency for every dashboard. */
+/** Selected dashboard-wide currency. The saved preference is hydrated from settings. */
 export const displayCurrency = writable('USD');
 
-export function setDisplayCurrency(code) {
-  if (RATES[code]) displayCurrency.set(code);
+/**
+ * Update the display immediately, then persist the preference locally/cloud.
+ * A failed local write restores the previous in-memory selection.
+ */
+export async function setDisplayCurrency(code) {
+  if (!RATES[code]) return false;
+  const previous = get(displayCurrency);
+  displayCurrency.set(code);
+  try {
+    await saveSetting('defaultCurrency', code);
+    return true;
+  } catch (error) {
+    displayCurrency.set(previous);
+    throw error;
+  }
 }
 
 /** Convert `amount` from `fromCode` into the active display currency. */
@@ -236,6 +249,7 @@ export function storesByName() {
 export const DEFAULT_SETTINGS = {
   balance: 0,
   balanceCurrency: 'USD',
+  defaultCurrency: '',
   payday: '',
   portfolioGrowth: 0.05,
   pensionGrowth: 0.05,
@@ -322,8 +336,13 @@ function hydrate(data) {
     store.set(sortRows(name, data[name] || []));
   });
   settings.set({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
-  const code = get(settings).balanceCurrency;
-  if (RATES[code]) displayCurrency.set(code);
+  const current = get(settings);
+  const code = RATES[current.defaultCurrency]
+    ? current.defaultCurrency
+    : RATES[current.balanceCurrency]
+      ? current.balanceCurrency
+      : 'USD';
+  displayCurrency.set(code);
 }
 
 /** Give migrated snapshots a valid SCD Type 2 chain (latest version open). */
@@ -416,7 +435,7 @@ export async function migrateLegacy(data) {
       if ((data.commitments || []).some((commitment) => commitment.id === transaction.id)) return;
       commitmentWrites.push({
         id: transaction.id || newId(),
-        name: transaction.name || transaction.category || 'Commitment',
+        name: transaction.name || transaction.category || 'Spend item',
         date: dayKey(transaction.date) || dayKey(new Date()),
         amount: num(transaction.amount),
         currencyCode: currencyOf(transaction)

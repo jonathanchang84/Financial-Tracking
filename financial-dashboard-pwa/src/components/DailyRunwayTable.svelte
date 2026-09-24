@@ -1,8 +1,7 @@
 <script>
   /**
-   * Daily runway grid — the exact metrics from the historic cash-flow screen:
-   * starting balance, safe amount, commitments, cumulative commitments,
-   * scheduled bills and ending balance, one row per day through payday.
+   * Daily runway grid — starting balance, safe-to-spend amount, Spend Items,
+   * cumulative Spend Items, scheduled bills and ending balance.
    */
   import { displayCurrency, convertCurrency, money } from '../stores/finance.js';
 
@@ -26,9 +25,9 @@
         <tr>
           <th>Date</th>
           <th>Starting</th>
-          <th>Safe today</th>
-          <th>Commitments</th>
-          <th>Cumulative</th>
+          <th>Safe to spend</th>
+          <th>Spend Items</th>
+          <th>Cumulative Spend Items</th>
           <th>Scheduled bills</th>
           <th>Ending</th>
         </tr>
@@ -45,14 +44,14 @@
             <td class:strong={row.commitments > 0}>{fmt(row.commitments)}</td>
             <td>{fmt(row.cumulative)}</td>
             <td class:strong={row.bills > 0}>{fmt(row.bills)}</td>
-            <td class="strong">{fmt(row.ending)}</td>
+            <td class="strong" class:negative={row.ending < 0}>{fmt(row.ending)}</td>
           </tr>
         {/each}
       </tbody>
     </table>
   </div>
   <p class="hint">
-    Safe today spreads the saved balance across the remaining days. Saturday and Sunday bill
-    due dates shift forward to Monday.
+    Safe today reserves scheduled bills and Spend Items before dividing the remaining cash across the cycle.
+    Saturday and Sunday bill due dates shift forward to Monday.
   </p>
 {/if}

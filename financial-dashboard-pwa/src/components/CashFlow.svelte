@@ -1,11 +1,11 @@
 <script>
   /**
    * Cash flow planner — the historic form controls plus the daily runway grid.
-   * Balance/currency/payday are settings; bills and commitments are records.
+   * Balance, balance currency and payday are settings; bills and Spend Items are records.
    */
   import {
     settings,
-    saveSetting,
+    saveSettings,
     bills,
     commitments,
     displayCurrency,
@@ -14,12 +14,13 @@
     RATES,
     CURRENCY_NAMES
   } from '../stores/finance.js';
-  import { runwayPlanner, num, currencyOf } from '../services/runway.js';
-  import { dayKey, longLabel } from '../services/dates.js';
+  import { runwayPlanner, num, currencyOf, parseNonNegativeNumber } from '../services/runway.js';
+  import { dayKey, longLabel, isValidDate, startOfDay } from '../services/dates.js';
   import { confirmDelete } from '../services/commands.js';
   import { showToast, errorToast } from '../stores/ui.js';
   import CurrencySelect from './CurrencySelect.svelte';
   import DailyRunwayTable from './DailyRunwayTable.svelte';
+  import RunwayVisual from './RunwayVisual.svelte';
   import RecordList from './RecordList.svelte';
   import BillModal from './BillModal.svelte';
   import CommitmentModal from './CommitmentModal.svelte';
@@ -31,6 +32,7 @@
   let editingCommitment = $state(null);
   let showBill = $state(false);
   let showCommitment = $state(false);
+  let savingCashSettings = $state(false);
 
   let syncedKey = '';
   // Re-fill the form whenever the stored settings change (boot, restore, save).
@@ -64,7 +66,7 @@
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
       .map((row) => ({
         id: row.id,
-        title: row.name || 'Commitment',
+        title: row.name || 'Spend item',
         subtitle: `${longLabel(row.date)} · ${currencyOf(row)}`,
         amount: money(num(row.amount), currencyOf(row)),
         raw: row
@@ -83,24 +85,45 @@
       }))
   );
 
-  async function saveCashSettings(event) {
-    event.preventDefault();
-    const balance = num(form.balance);
-    if (!Number.isFinite(balance)) {
-      errorToast('Enter your available balance');
-      return;
-    }
-    if (!form.payday) {
-      errorToast('Choose your next payday');
+  // Persist the balance when the field is committed. Invalid drafts are left
+  // visible for correction and never replace the last valid stored balance.
+  async function saveBalanceNow() {
+    const balance = parseNonNegativeNumber(form.balance);
+    if (balance === null) {
+      errorToast('Enter a valid available balance');
       return;
     }
     try {
-      await saveSetting('balance', balance);
-      await saveSetting('balanceCurrency', form.currency);
-      await saveSetting('payday', dayKey(form.payday));
-      showToast('Runway settings saved');
+      await saveSettings({ balance, balanceCurrency: form.currency });
+      showToast('Balance saved');
+    } catch (error) {
+      errorToast('Could not save balance: ' + error.message);
+    }
+  }
+
+  async function saveCashSettings(event) {
+    event.preventDefault();
+    const balance = parseNonNegativeNumber(form.balance);
+    if (balance === null) {
+      errorToast('Enter a valid available balance');
+      return;
+    }
+    if (form.payday && (!isValidDate(form.payday) || startOfDay(form.payday) < startOfDay(new Date()))) {
+      errorToast('Choose today or a future payday');
+      return;
+    }
+    savingCashSettings = true;
+    try {
+      await saveSettings({
+        balance,
+        balanceCurrency: form.currency,
+        payday: form.payday ? dayKey(form.payday) : ''
+      });
+      showToast(form.payday ? 'Runway settings saved' : 'Balance saved — set a payday to see the runway');
     } catch (error) {
       errorToast(`Could not save settings: ${error.message}`);
+    } finally {
+      savingCashSettings = false;
     }
   }
 
@@ -109,7 +132,7 @@
   }
 
   async function removeCommitment(row) {
-    await confirmDelete('commitments', row.id, `Delete the commitment "${row.name}"?`);
+    await confirmDelete('commitments', row.id, `Delete the spend item "${row.name}"?`);
   }
 
   function openBill(row = null) {
@@ -130,57 +153,72 @@
       <p class="eyebrow">CASH FLOW</p>
       <h2>Runway planner</h2>
       <p class="muted">
-        Save the balance, currency and payday, then add bills and commitments. Everything is stored on
+        Save the balance, balance currency and payday, then add bills and Spend Items. Everything is stored on
         this device first.
       </p>
     </div>
-    <CurrencySelect id="cashflow-currency" compact label="View" />
+    <CurrencySelect id="cashflow-currency" compact label="Default currency" />
   </div>
 
   <section class="panel">
     <form class="fh-form" onsubmit={saveCashSettings}>
       <label>Available balance
-        <input type="number" step="0.01" bind:value={form.balance} required />
+        <input type="number" min="0" step="0.01" bind:value={form.balance} required onchange={saveBalanceNow} />
       </label>
-      <label>Currency
-        <select bind:value={form.currency}>
+      <label>Balance currency
+        <select bind:value={form.currency} onchange={saveBalanceNow}>
           {#each codes as code}<option value={code}>{code} · {CURRENCY_NAMES[code] ?? code}</option>{/each}
         </select>
       </label>
       <label>Next payday
-        <input type="date" bind:value={form.payday} required />
+        <input type="date" bind:value={form.payday} />
       </label>
-      <button class="primary-button" type="submit">Save balance and payday</button>
+      <button class="primary-button" type="submit" disabled={savingCashSettings}>Save balance and payday</button>
     </form>
 
     <div class="fh-metrics" style="margin-top:14px">
       <article class="fh-metric">
-        <p class="eyebrow">SAFE TO COMMIT EACH DAY</p>
+        <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
         <strong>{inDisplay(plan.safeToday)}</strong>
-        <p class="hint">Balance spread across {plan.dayCount || 0} day(s)</p>
+        <p class="hint">After reserving {inDisplay(plan.obligationTotal)} of planned obligations</p>
       </article>
       <article class="fh-metric">
         <p class="eyebrow">DAYS TO PAYDAY</p>
         <strong>{plan.dayCount || 0}</strong>
         <p class="hint">
-          {plan.payday ? `Through ${longLabel(plan.payday)}` : 'Set your next payday'}
+          {plan.paydayPast ? 'Payday has passed — choose a future date' : plan.payday ? `Through ${longLabel(plan.payday)}` : 'Set your next payday'}
           {#if plan.truncated}<br />Grid shows the first {plan.renderedDays} days{/if}
         </p>
       </article>
       <article class="fh-metric">
+        <p class="eyebrow">CASH AFTER PLANNED SPEND</p>
+        <strong class:negative={plan.cashAfterPlannedSpend < 0}>{inDisplay(plan.cashAfterPlannedSpend)}</strong>
+        <p class="hint">{plan.shortfall > 0 ? `${inDisplay(plan.shortfall)} short of obligations` : 'Available for the cycle after obligations'}</p>
+      </article>
+      <article class="fh-metric">
         <p class="eyebrow">PROJECTED AT PAYDAY</p>
-        <strong>{inDisplay(plan.projectedAtPayday)}</strong>
-        <p class="hint">After safe spend, commitments and bills</p>
+        <strong class:negative={plan.projectedAtPayday < 0}>{inDisplay(plan.projectedAtPayday)}</strong>
+        <p class="hint">After safe spend, Spend Items and bills</p>
       </article>
     </div>
   </section>
 
   <section class="panel">
+    <RunwayVisual
+      rows={plan.rows}
+      currency={balanceCurrency}
+      scheduledBills={plan.scheduledBills}
+      scheduledCommitments={plan.scheduledCommitments}
+      obligationTotal={plan.obligationTotal}
+      truncated={plan.truncated}
+      emptyMessage="Set your balance and payday to see the runway visualization."
+    />
+
     <div class="section-heading">
       <div>
         <p class="eyebrow">DAILY VIEW</p>
         <h3>Daily runway table</h3>
-        <p class="hint">One row per day: starting balance, safe amount, commitments, cumulative, bills, ending balance.</p>
+        <p class="hint">One row per day: starting balance, safe-to-spend amount, Spend Items, cumulative Spend Items, bills and ending balance.</p>
       </div>
     </div>
     <DailyRunwayTable
@@ -192,12 +230,12 @@
 
   <section class="panel">
     <div class="section-heading">
-      <div><p class="eyebrow">COMMITMENTS</p><h3>Named commitments</h3></div>
-      <button class="primary-button" type="button" onclick={() => openCommitment()}>Add commitment</button>
+      <div><p class="eyebrow">SPEND ITEMS</p><h3>Spend items</h3></div>
+      <button class="primary-button" type="button" onclick={() => openCommitment()}>Add spend item</button>
     </div>
     <RecordList
       rows={commitmentRows}
-      emptyMessage="No commitments recorded yet."
+      emptyMessage="No spend items recorded yet."
       onEdit={openCommitment}
       onDelete={removeCommitment}
     />

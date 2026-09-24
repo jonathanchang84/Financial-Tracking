@@ -1,5 +1,5 @@
 /**
- * Thin command layer for the simple entities (bills, commitments, budgets,
+ * Thin command layer for the simple entities (bills, Spend Items, budgets,
  * transactions). Anything with SCD Type 2 history lives in `positions.js`.
  *
  * Writes are IndexedDB-first: the promise resolves as soon as the local write
@@ -53,15 +53,15 @@ export async function confirmDelete(storeName, id, question = 'Delete this local
   return true;
 }
 
-/** Validate + save a named, dated commitment (historic commitmentModal rules). */
+/** Validate + save a named, dated Spend Item (historic commitmentModal rules). */
 export async function saveCommitment({ id, name, date, amount, currency }) {
   const trimmed = String(name || '').trim();
-  if (!trimmed) throw new Error('Give the commitment a name');
+  if (!trimmed) throw new Error('Give the spend item a name');
   if (!(Number(amount) > 0)) throw new Error('Enter a valid amount');
   return saveRecord(
     'commitments',
     { id: id || newId(), name: trimmed, date, amount: Number(amount), currencyCode: currency },
-    { message: id ? 'Commitment updated' : 'Commitment added' }
+    { message: id ? 'Spend item updated' : 'Spend item added' }
   );
 }
 

@@ -1,5 +1,5 @@
 <script>
-  /** Add / edit a named, dated commitment (one-off spend planned for a day). */
+  /** Add / edit a named, dated spend item (one-off spend planned for a day). */
   import Modal from './Modal.svelte';
   import { RATES, CURRENCY_NAMES } from '../stores/finance.js';
   import { saveCommitment } from '../services/commands.js';
@@ -47,9 +47,9 @@
 </script>
 
 <Modal
-  title={record ? 'Update commitment' : 'Add commitment'}
-  eyebrow="PLANNED SPEND"
-  subtitle="Commitments reduce that day's ending balance in the runway grid."
+  title={record ? 'Update spend item' : 'Add spend item'}
+  eyebrow="SPEND ITEM"
+  subtitle="Spend items reduce the ending balance for that day in the runway grid."
   {onClose}
 >
   <form onsubmit={submit}>
@@ -64,7 +64,7 @@
     <div class="modal-actions">
       <button class="secondary-button" type="button" onclick={onClose}>Cancel</button>
       <button class="primary-button" type="submit" disabled={busy}>
-        {record ? 'Save commitment' : 'Add commitment'}
+        {record ? 'Save spend item' : 'Add spend item'}
       </button>
     </div>
   </form>

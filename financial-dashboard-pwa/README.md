@@ -7,7 +7,7 @@ Offline-first Svelte/Vite production app. It does not replace the historic `pwa/
 - Local source of truth: IndexedDB `financial-health-local` version 2.
 - Writes commit locally first. If the browser is online and Supabase is configured, the sync engine upserts in the background and stamps `owner_id` from the signed-in user. Offline rows stay `pending_sync` until connectivity returns.
 - Overview display currency converts figures with the historic fixed rates. Account, holding, and pension rows keep their own currency and can be edited or deleted.
-- Cash flow uses a daily table (no chart): starting balance, safe amount, commitments, cumulative commitments, scheduled bills, ending balance. Saturday and Sunday bill due dates shift to Monday.
+- Cash flow uses a daily table plus a lightweight inline runway trajectory and planned-obligation breakdown: starting balance, safe-to-spend amount, Spend Items, cumulative Spend Items, scheduled bills and ending balance. Saturday and Sunday bill due dates shift to Monday. The saved balance, default display currency and payday are stored in IndexedDB and synchronized through the existing settings table.
 - Position, investment, and pension updates append SCD Type 2 snapshots (`validFrom`, `validTo`, `currentFlag`) under a stable logical id instead of rewriting history.
 - Static `dist/` output is the Cloudflare Pages artifact. Runtime cost is $0 on the Cloudflare Pages and Supabase free tiers when those limits are respected.
 
