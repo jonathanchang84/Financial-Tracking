@@ -76,6 +76,7 @@ small { color: var(--muted); }
 }
 .section-heading, .panel-heading {
   display: flex; justify-content: space-between; align-items: baseline;
+}
 
 .fh-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .fh-metric {
@@ -119,19 +120,48 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .stack-row > span { display: flex; flex-direction: column; min-width: 0; }
 .stack-row > span:last-child { flex-direction: row; align-items: center; gap: 6px; }
 
-.fh-scroll, .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table.fh-table, table.grid { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.fh-scroll, .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fh-scroll > table, .table-scroll > table { width: 100%; }
+table.fh-table, table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums lining-nums;
+}
 table.fh-table th, table.fh-table td, table.grid th, table.grid td {
-  padding: 7px 9px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 table.fh-table th:first-child, table.fh-table td:first-child,
-table.grid th:first-child, table.grid td:first-child { text-align: left; }
+table.grid th:first-child, table.grid td:first-child,
+table.fh-table th[scope='row'] { text-align: left; }
+table.fh-table th.text-cell, table.fh-table td.text-cell,
+table.grid th.text-cell, table.grid td.text-cell { text-align: left; }
+table.fh-table th.status-cell, table.fh-table td.status-cell,
+table.grid th.status-cell, table.grid td.status-cell { text-align: center; }
 table.fh-table th, table.grid th { color: var(--muted); font-weight: 600; }
-table.fh-table tbody tr:hover { background: var(--panel-alt); }
+table.fh-table tbody tr:hover, table.grid tbody tr:hover { background: var(--panel-alt); }
 table.fh-table td.strong { font-weight: 600; }
-
-  gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
-}
+table.fh-table caption { text-align: left; }
+.fh-table.runway-table { table-layout: fixed; min-width: 1050px; }
+.runway-table col.runway-date { width: 120px; }
+.runway-table col.runway-number { width: 135px; }
+.runway-table col.runway-cumulative { width: 175px; }
+.fh-table.current-month-table { table-layout: fixed; min-width: 780px; }
+.current-month-table col.expense-date { width: 112px; }
+.current-month-table col.expense-item { width: 180px; }
+.current-month-table col.expense-type { width: 135px; }
+.current-month-table col.expense-amount { width: 130px; }
+.current-month-table col.expense-status { width: 90px; }
+.current-month-table col.expense-remainder { width: 135px; }
+.fh-table.monthly-history-table, .fh-table.monthly-projection-table { table-layout: fixed; }
 .view-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 
 .badge {

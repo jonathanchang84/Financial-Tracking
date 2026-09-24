@@ -57,20 +57,27 @@
     <details class="monthly-details">
       <summary>Next 12 months (compounded)</summary>
       <div class="table-scroll monthly-table-wrap">
-        <table class="monthly-projection-table">
+        <table class="fh-table monthly-projection-table">
+          <colgroup>
+            <col class="projection-month" />
+            {#each series as item (item.id || item.name + item.currency)}
+              <col class="projection-value" />
+              <col class="projection-change" />
+            {/each}
+          </colgroup>
           <thead>
             <tr>
-              <th>Month</th>
+              <th scope="col" class="text-cell">Month</th>
               {#each series as item (item.id || item.name + item.currency)}
-                <th>{item.name}</th>
-                <th>% MoM</th>
+                <th scope="col" class="text-cell">{item.name}</th>
+                <th scope="col">% MoM</th>
               {/each}
             </tr>
           </thead>
           <tbody>
             {#each monthlyRows as row (row.month)}
               <tr>
-                <td>{row.month === 0 ? 'Now' : `M${row.month}`}</td>
+                <th scope="row" class="text-cell">{row.month === 0 ? 'Now' : `M${row.month}`}</th>
                 {#each series as item, index (item.id || item.name + item.currency)}
                   <td>{fmt(row.values?.[index], item.currency)}</td>
                   <td class="expected-change">
@@ -106,7 +113,11 @@
   .monthly-details summary { cursor: pointer; color: var(--accent); font-size: 0.82rem; }
   .monthly-table-wrap { margin-top: 8px; }
   .monthly-projection-table { min-width: 720px; width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .monthly-projection-table col.projection-month { width: 105px; }
+  .monthly-projection-table col.projection-value { width: 140px; }
+  .monthly-projection-table col.projection-change { width: 90px; }
   .monthly-projection-table th, .monthly-projection-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-  .monthly-projection-table th:first-child, .monthly-projection-table td:first-child { text-align: left; }
+  .monthly-projection-table th:first-child, .monthly-projection-table td:first-child,
+  .monthly-projection-table th.text-cell { text-align: left; }
   .monthly-projection-table th { color: var(--muted); }
 </style>

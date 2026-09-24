@@ -20,25 +20,34 @@
   <p class="muted">{emptyMessage}</p>
 {:else}
   <div class="fh-scroll">
-    <table class="fh-table">
+    <table class="fh-table runway-table">
+      <colgroup>
+        <col class="runway-date" />
+        <col class="runway-number" />
+        <col class="runway-number" />
+        <col class="runway-number" />
+        <col class="runway-cumulative" />
+        <col class="runway-number" />
+        <col class="runway-number" />
+      </colgroup>
       <thead>
         <tr>
-          <th>Date</th>
-          <th>Starting</th>
-          <th>Safe to spend</th>
-          <th>Spend Items</th>
-          <th>Cumulative Spend Items</th>
-          <th>Scheduled bills</th>
-          <th>Ending</th>
+          <th scope="col" class="text-cell">Date</th>
+          <th scope="col">Starting</th>
+          <th scope="col">Safe to spend</th>
+          <th scope="col">Spend Items</th>
+          <th scope="col">Cumulative Spend Items</th>
+          <th scope="col">Scheduled bills</th>
+          <th scope="col">Ending</th>
         </tr>
       </thead>
       <tbody>
         {#each visible as row (row.date)}
           <tr>
-            <td>
+            <th scope="row" class="text-cell">
               <strong>{row.label}</strong>
               <small>Day {row.dayNumber}</small>
-            </td>
+            </th>
             <td>{fmt(row.starting)}</td>
             <td>{fmt(row.safe)}</td>
             <td class:strong={row.commitments > 0}>{fmt(row.commitments)}</td>

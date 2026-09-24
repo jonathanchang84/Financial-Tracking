@@ -17,13 +17,20 @@
 
 {#if table.rows.length && table.columns.length}
   <div class="table-scroll monthly-history-wrap">
-    <table class="fh-table monthly-history-table">
+    <table class="fh-table monthly-history-table" style={`min-width: ${Math.max(600, 120 + table.columns.length * 220)}px`}>
+      <colgroup>
+        <col class="history-month" />
+        {#each table.columns as column (column.key)}
+          <col class="history-value" />
+          <col class="history-change" />
+        {/each}
+      </colgroup>
       <caption>Monthly item values. Each cell shows the last value recorded in that month.</caption>
       <thead>
         <tr>
-          <th scope="col">Month</th>
+          <th scope="col" class="text-cell">Month</th>
           {#each table.columns as column (column.key)}
-            <th scope="col" title={`${column.name} (${column.currency})`}>{column.name}<small>{column.currency}</small></th>
+            <th scope="col" class="text-cell" title={`${column.name} (${column.currency})`}>{column.name}<small>{column.currency}</small></th>
             <th scope="col">% change</th>
           {/each}
         </tr>
@@ -31,7 +38,7 @@
       <tbody>
         {#each table.rows as row (row.month)}
           <tr>
-            <th scope="row">{monthLabel(row.month)}</th>
+            <th scope="row" class="text-cell">{monthLabel(row.month)}</th>
             {#each table.columns as column (column.key)}
               {@const cell = row.cells[column.key]}
               <td class="value-cell">{valueLabel(cell?.value)}</td>
@@ -49,6 +56,9 @@
 <style>
   .monthly-history-wrap { margin-top: 2px; border: 1px solid var(--line); border-radius: 10px; }
   .monthly-history-table { min-width: 520px; }
+  .monthly-history-table col.history-month { width: 120px; }
+  .monthly-history-table col.history-value { width: 130px; }
+  .monthly-history-table col.history-change { width: 90px; }
   .monthly-history-table caption { caption-side: top; text-align: left; padding: 9px 10px; color: var(--muted); font-size: 0.76rem; }
   .monthly-history-table th, .monthly-history-table td { padding: 8px 10px; }
   .monthly-history-table th:first-child, .monthly-history-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); }

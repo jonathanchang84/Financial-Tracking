@@ -31,18 +31,33 @@
 
   {#if rows.length}
     <div class="fh-scroll" style="margin-top:16px">
-      <table class="fh-table">
+      <table class="fh-table current-month-table">
+        <colgroup>
+          <col class="expense-date" />
+          <col class="expense-item" />
+          <col class="expense-type" />
+          <col class="expense-amount" />
+          <col class="expense-status" />
+          <col class="expense-remainder" />
+        </colgroup>
         <thead>
-          <tr><th>Date</th><th>Item</th><th>Type</th><th>Amount</th><th>Paid</th><th>Remainder</th></tr>
+          <tr>
+            <th scope="col" class="text-cell">Date</th>
+            <th scope="col" class="text-cell">Item</th>
+            <th scope="col" class="text-cell">Type</th>
+            <th scope="col">Amount</th>
+            <th scope="col" class="status-cell">Paid</th>
+            <th scope="col">Remainder</th>
+          </tr>
         </thead>
         <tbody>
           {#each rows as row (row.paymentKey || `${row.kind}-${row.id}`)}
             <tr>
-              <td>{longLabel(row.date)}</td>
-              <td><strong>{row.name}</strong></td>
-              <td>{row.category}</td>
+              <th scope="row" class="text-cell">{longLabel(row.date)}</th>
+              <td class="text-cell"><strong>{row.name}</strong></td>
+              <td class="text-cell">{row.category}</td>
               <td>{fmt(row.amount)}</td>
-              <td>
+              <td class="status-cell">
                 <button class:active={row.paid} class="text-button" type="button" aria-pressed={row.paid} onclick={() => onTogglePaid(row)}>
                   {row.paid ? 'Paid' : 'Unpaid'}
                 </button>
