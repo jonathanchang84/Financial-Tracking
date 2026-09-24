@@ -18,20 +18,22 @@
       rawValue: num(point.values?.[index])
     })).filter((item) => item.value > 0);
     const value = segments.reduce((sum, item) => sum + item.value, 0);
-    return { year: point.year, value, segments };
+    return { year: point.year, calendarYear: point.calendarYear ?? point.year, value, segments };
   }));
   const maxValue = $derived(Math.max(1, ...bars.map((bar) => bar.value)));
-  const chartLabel = $derived(series.length ? `Projected pension value by year through ${bars.at(-1)?.year ?? 0}` : emptyMessage);
+  const chartLabel = $derived(series.length
+    ? `Projected pension value by calendar year from ${bars[0]?.calendarYear ?? ''} through ${bars.at(-1)?.calendarYear ?? ''}`
+    : emptyMessage);
 </script>
 
 {#if series.length && bars.length}
   <div class="pension-projection" aria-label={chartLabel}>
     <div class="projection-plot" role="img" aria-label={chartLabel}>
-      <div class="projection-bars">
+      <div class="projection-bars" style={`--projection-years: ${bars.length}`}>
         {#each bars as bar (bar.year)}
           {@const height = Math.max(2, (bar.value / maxValue) * 100)}
           <div class="projection-column">
-            <div class="projection-stack" style={`height: ${height}%`} title={`${bar.year === 0 ? 'Now' : `Year ${bar.year}`}: ${fmt(bar.value, $displayCurrency)}`}>
+            <div class="projection-stack" style={`height: ${height}%`} title={`${bar.calendarYear}: ${fmt(bar.value, $displayCurrency)}`}>
               {#each bar.segments as segment (segment.name)}
                 <span
                   class="projection-segment"
@@ -40,7 +42,7 @@
                 ></span>
               {/each}
             </div>
-            <small>{bar.year === 0 ? 'Now' : `Y${bar.year}`}</small>
+            <small class="projection-year">{bar.calendarYear}</small>
           </div>
         {/each}
       </div>
@@ -53,7 +55,10 @@
         </li>
       {/each}
     </ul>
-    <p class="hint">Each pot compounds monthly using (1 + annual rate)<sup>1/12</sup> − 1; annual bars show the value after twelve compounded months.</p>
+    <p class="hint">Calendar years are shown along the bottom. Each pot compounds monthly using (1 + annual rate)<sup>1/12</sup> − 1; annual bars show the value after twelve compounded months.</p>
+    {#if bars.length > 20}
+      <p class="hint projection-scroll-hint">Scroll horizontally to see every calendar year.</p>
+    {/if}
     <details class="monthly-details">
       <summary>Next 12 months (compounded)</summary>
       <div class="table-scroll monthly-table-wrap">
@@ -100,11 +105,12 @@
 <style>
   .pension-projection { display: grid; gap: 10px; }
   .projection-plot { background: var(--panel-alt); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 8px; overflow-x: auto; }
-  .projection-bars { min-width: 560px; height: 220px; display: flex; align-items: end; gap: 8px; }
-  .projection-column { height: 100%; flex: 1; min-width: 28px; display: flex; flex-direction: column; justify-content: end; align-items: center; gap: 5px; }
-  .projection-stack { width: min(34px, 80%); min-height: 2px; display: flex; flex-direction: column-reverse; justify-content: start; border-radius: 5px 5px 2px 2px; overflow: hidden; background: var(--line); }
+  .projection-bars { min-width: max(560px, calc(var(--projection-years) * 42px)); height: 250px; display: flex; align-items: end; gap: 8px; }
+  .projection-column { height: 100%; flex: 1 0 34px; min-width: 34px; display: flex; flex-direction: column; justify-content: end; align-items: center; gap: 7px; }
+  .projection-stack { width: min(30px, 78%); min-height: 2px; display: flex; flex-direction: column-reverse; justify-content: start; border-radius: 5px 5px 2px 2px; overflow: hidden; background: var(--line); }
   .projection-segment { display: block; width: 100%; min-height: 1px; }
-  .projection-column small { color: var(--muted); font-size: 0.68rem; }
+  .projection-year { color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .projection-scroll-hint { color: var(--accent); }
   .projection-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 0; margin: 0; font-size: 0.78rem; }
   .projection-legend li { display: inline-flex; align-items: center; gap: 5px; }
   .projection-legend small { display: block; font-size: 0.65rem; }

@@ -32,7 +32,7 @@
   } from '../services/positions.js';
   import { isCurrentVersion } from '../services/scd2.js';
   import { num, currencyOf, seriesNameOf } from '../services/runway.js';
-  import { projectPensionSeries } from '../services/financeCalculations.js';
+  import { projectPensionSeries, MAX_PENSION_PROJECTION_YEARS } from '../services/financeCalculations.js';
   import { buildMonthlyHistoryTable } from '../services/monthlyHistory.js';
   import { todayISO } from '../services/recordHelpers.js';
   import { longLabel } from '../services/dates.js';
@@ -115,13 +115,20 @@
       ? $settings.pensionPotGrowth
       : {}
   );
+  let pensionProjectionYears = $state(10);
+  $effect(() => {
+    const saved = Number($settings.pensionProjectionYears);
+    pensionProjectionYears = Number.isFinite(saved)
+      ? Math.min(MAX_PENSION_PROJECTION_YEARS, Math.max(1, Math.trunc(saved)))
+      : 10;
+  });
   const pensionProjection = $derived(
     projectPensionSeries({
       history: $historyStore || [],
       pots: $store || [],
       growthByPot: pensionPotGrowth,
       annualRate: num($settings.pensionGrowth),
-      years: 10
+      years: pensionProjectionYears
     })
   );
 
@@ -149,6 +156,18 @@
   async function savePensionGrowth(rates) {
     await saveSetting('pensionPotGrowth', rates);
     showToast('Pension growth rates saved');
+  }
+
+  async function saveProjectionYears(event) {
+    const value = Number(event.currentTarget.value);
+    if (!Number.isFinite(value)) return;
+    pensionProjectionYears = Math.min(MAX_PENSION_PROJECTION_YEARS, Math.max(1, Math.trunc(value)));
+    try {
+      await saveSetting('pensionProjectionYears', pensionProjectionYears);
+      showToast(`Pension forecast set to ${pensionProjectionYears} years`);
+    } catch (error) {
+      errorToast(error.message);
+    }
   }
 
   async function submitSnapshot(event) {
@@ -325,8 +344,15 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">FORECAST</p>
-          <h3>Annual pension projection</h3>
+          <h3>Stacked pension projection</h3>
           <p class="hint">Each pot uses its own annual rate; the monthly equivalent is compounded, not annual growth divided by 12.</p>
+          <label class="projection-horizon">Forecast horizon
+            <select value={pensionProjectionYears} onchange={saveProjectionYears}>
+              {#each Array.from({ length: MAX_PENSION_PROJECTION_YEARS }, (_, index) => index + 1) as years}
+                <option value={years}>{years} {years === 1 ? 'year' : 'years'}</option>
+              {/each}
+            </select>
+          </label>
         </div>
       </div>
       <PensionProjection projection={pensionProjection} />

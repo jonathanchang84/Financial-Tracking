@@ -7,6 +7,7 @@ import { currencyOf, num, seriesNameOf } from './runway.js';
 import { expensePaymentKey, isExpensePaid } from './paymentState.js';
 
 const DEFAULT_CATEGORY = 'Other';
+export const MAX_PENSION_PROJECTION_YEARS = 80;
 
 export function daysUntilPayday(today, payday) {
   if (!isValidDate(today) || !isValidDate(payday)) return 0;
@@ -117,6 +118,17 @@ function pensionSeriesKey(row) {
   return `${seriesNameOf(row)}::${currencyOf(row)}`;
 }
 
+function projectionReferenceDate({ history = [], pots = [], today = new Date() }) {
+  const dated = [...history, ...pots]
+    .map((row) => row?.date || row?.validFrom)
+    .filter(isValidDate)
+    .map(dayKey)
+    .sort();
+  const latest = dated.at(-1);
+  if (latest) return startOfDay(latest);
+  return isValidDate(today) ? startOfDay(today) : new Date();
+}
+
 function safeAnnualRate(value, fallback = 0.05) {
   if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
     const fallbackRate = num(fallback);
@@ -157,7 +169,8 @@ export function projectPensionSeries({
   pots = [],
   growthByPot = {},
   annualRate = 0.05,
-  years = 10
+  years = 10,
+  today = new Date()
 } = {}) {
   const potById = new Map(pots.map((pot) => [String(pot?.id || ''), pot]));
   const potBySeries = new Map(pots.map((pot) => [pensionSeriesKey(pot), pot]));
@@ -190,7 +203,12 @@ export function projectPensionSeries({
     })
     .filter((row) => row.value >= 0);
 
-  const totalYears = Math.max(0, Math.trunc(years));
+  const reference = projectionReferenceDate({ history, pots, today });
+  const baseYear = reference.getFullYear();
+  const requestedYears = Number(years);
+  const totalYears = Number.isFinite(requestedYears)
+    ? Math.min(MAX_PENSION_PROJECTION_YEARS, Math.max(0, Math.trunc(requestedYears)))
+    : 0;
   const totalMonths = totalYears * 12;
   const monthlyPoints = Array.from({ length: totalMonths + 1 }, (_, month) => ({
     month,
@@ -202,10 +220,21 @@ export function projectPensionSeries({
   }));
   const points = Array.from({ length: totalYears + 1 }, (_, year) => ({
     year,
+    calendarYear: baseYear + year,
     values: monthlyPoints[year * 12].values
   }));
 
-  return { series, points, monthlyPoints, annualRate: num(annualRate) };
+  return {
+    series,
+    points,
+    monthlyPoints,
+    annualRate: num(annualRate),
+    years: totalYears,
+    baseDate: dayKey(reference),
+    baseYear,
+    baseMonth: reference.getMonth(),
+    maxYears: MAX_PENSION_PROJECTION_YEARS
+  };
 }
 
 /** Redundancy formulas, with safe handling for below-threshold/zero inputs. */

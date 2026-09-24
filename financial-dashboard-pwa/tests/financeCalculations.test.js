@@ -155,6 +155,45 @@ test('pension growth follows a pot stable logical id across snapshot versions', 
   assert.ok(Math.abs(projection.points[1].values[0] - 1080) < 0.0001);
 });
 
+test('pension projection supports a capped 80-year calendar horizon', () => {
+  const projection = projectPensionSeries({
+    pots: [{ id: 'ubs', name: 'UBS', value: 1000, currencyCode: 'USD' }],
+    annualRate: 0.05,
+    years: 999,
+    today: '2026-09-24'
+  });
+  assert.equal(projection.years, 80);
+  assert.equal(projection.maxYears, 80);
+  assert.equal(projection.baseYear, 2026);
+  assert.equal(projection.points.length, 81);
+  assert.equal(projection.points[0].calendarYear, 2026);
+  assert.equal(projection.points.at(-1).calendarYear, 2106);
+  assert.equal(projection.monthlyPoints.length, 961);
+});
+
+test('pension projection uses the current year when no valid reference date is supplied', () => {
+  const projection = projectPensionSeries({
+    pots: [{ id: 'ubs', name: 'UBS', value: 1000, currencyCode: 'USD' }],
+    years: 2,
+    today: 'not-a-date'
+  });
+  assert.equal(projection.points[0].calendarYear, new Date().getFullYear());
+  assert.equal(projection.points.at(-1).calendarYear, new Date().getFullYear() + 2);
+});
+
+test('pension projection uses the latest recorded year for calendar labels', () => {
+  const projection = projectPensionSeries({
+    history: [
+      { logicalId: 'ubs', series: 'UBS', date: '2024-06-30', value: 1000, currencyCode: 'USD' },
+      { logicalId: 'ubs', series: 'UBS', date: '2025-06-30', value: 1100, currencyCode: 'USD' }
+    ],
+    years: 2,
+    today: '2026-09-24'
+  });
+  assert.equal(projection.baseYear, 2025);
+  assert.deepEqual(projection.points.map((point) => point.calendarYear), [2025, 2026, 2027]);
+});
+
 test('redundancy projection matches the workbook tax and runway scenarios', () => {
   const result = redundancyProjection({
     payout: 71855.77,

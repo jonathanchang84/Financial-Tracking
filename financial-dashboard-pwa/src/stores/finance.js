@@ -255,6 +255,7 @@ export const DEFAULT_SETTINGS = {
   portfolioGrowth: 0.05,
   pensionGrowth: 0.05,
   pensionPotGrowth: {},
+  pensionProjectionYears: 10,
   redundancyPayout: '',
   redundancyTaxFreeThreshold: 30000,
   redundancyTaxRate: 0.4,
