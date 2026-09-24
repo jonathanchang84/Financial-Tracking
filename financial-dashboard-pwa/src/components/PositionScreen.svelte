@@ -32,7 +32,7 @@
   } from '../services/positions.js';
   import { isCurrentVersion } from '../services/scd2.js';
   import { num, currencyOf, seriesNameOf } from '../services/runway.js';
-  import { monthlyPensionRate, projectPensionSeries } from '../services/financeCalculations.js';
+  import { projectPensionSeries } from '../services/financeCalculations.js';
   import { buildMonthlyHistoryTable } from '../services/monthlyHistory.js';
   import { todayISO } from '../services/recordHelpers.js';
   import { longLabel } from '../services/dates.js';
@@ -41,6 +41,7 @@
   import RecordList from './RecordList.svelte';
   import PositionUpdateModal from './PositionUpdateModal.svelte';
   import MonthlyHistoryTable from './MonthlyHistoryTable.svelte';
+  import PensionGrowthEditor from './PensionGrowthEditor.svelte';
   import PensionProjection from './PensionProjection.svelte';
 
   // `entityKey` is fixed per instance (App renders one screen per view).
@@ -109,15 +110,20 @@
       convert: (value, currency) => convertCurrency(value, currency, $displayCurrency)
     })
   );
+  const pensionPotGrowth = $derived.by(() =>
+    $settings.pensionPotGrowth && typeof $settings.pensionPotGrowth === 'object'
+      ? $settings.pensionPotGrowth
+      : {}
+  );
   const pensionProjection = $derived(
     projectPensionSeries({
       history: $historyStore || [],
       pots: $store || [],
+      growthByPot: pensionPotGrowth,
       annualRate: num($settings.pensionGrowth),
       years: 10
     })
   );
-  const monthlyPensionRatePercent = $derived((monthlyPensionRate(num($settings.pensionGrowth)) * 100).toFixed(3));
 
   function entityValue(row) {
     return config.kind === 'holding' ? holdingValue(row) : signedValue(row);
@@ -140,6 +146,11 @@
     modal = { mode, record };
   }
 
+  async function savePensionGrowth(rates) {
+    await saveSetting('pensionPotGrowth', rates);
+    showToast('Pension growth rates saved');
+  }
+
   async function submitSnapshot(event) {
     event.preventDefault();
     try {
@@ -150,7 +161,6 @@
         currency: form.currency
       });
       if (entityKey === 'holdings') await saveSetting('portfolioGrowth', num(form.growth) / 100);
-      if (entityKey === 'pensions') await saveSetting('pensionGrowth', num(form.growth) / 100);
       form = { ...form, value: '' };
       showToast(`Snapshot saved under series “${plan.insert.series}”`);
     } catch (error) {
@@ -271,7 +281,7 @@
           {#each codes as code}<option value={code}>{code} · {CURRENCY_NAMES[code] ?? code}</option>{/each}
         </select>
       </label>
-      {#if entityKey !== 'netWorth'}
+      {#if entityKey === 'holdings'}
         <label>Annual growth %<input type="number" step="0.1" min="-100" bind:value={form.growth} /></label>
       {/if}
       <button class="primary-button" type="submit">Save snapshot</button>
@@ -296,9 +306,27 @@
     <section class="panel">
       <div class="section-heading">
         <div>
+          <p class="eyebrow">POT ASSUMPTIONS</p>
+          <h3>Annual growth per pension pot</h3>
+          <p class="hint">Each pot uses its own rate. The monthly rate is compounded from the annual rate.</p>
+        </div>
+      </div>
+      <PensionGrowthEditor
+        pots={$store || []}
+        rates={pensionPotGrowth}
+        fallbackRate={num($settings.pensionGrowth)}
+        onSave={savePensionGrowth}
+      />
+    </section>
+  {/if}
+
+  {#if entityKey === 'pensions'}
+    <section class="panel">
+      <div class="section-heading">
+        <div>
           <p class="eyebrow">FORECAST</p>
           <h3>Annual pension projection</h3>
-          <p class="hint">Annual rate {(num($settings.pensionGrowth) * 100).toFixed(2)}% · monthly equivalent {monthlyPensionRatePercent}%.</p>
+          <p class="hint">Each pot uses its own annual rate; the monthly equivalent is compounded, not annual growth divided by 12.</p>
         </div>
       </div>
       <PensionProjection projection={pensionProjection} />

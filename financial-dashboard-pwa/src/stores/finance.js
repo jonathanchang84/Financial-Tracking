@@ -254,6 +254,7 @@ export const DEFAULT_SETTINGS = {
   payday: '',
   portfolioGrowth: 0.05,
   pensionGrowth: 0.05,
+  pensionPotGrowth: {},
   redundancyPayout: '',
   redundancyTaxFreeThreshold: 30000,
   redundancyTaxRate: 0.4,

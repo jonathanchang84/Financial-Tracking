@@ -32,6 +32,10 @@
 
   const user = $derived($session);
 
+  $effect(() => {
+    if ($passwordRecovery) mode = 'reset';
+  });
+
   function switchMode(next) {
     mode = next;
     error = '';
@@ -112,6 +116,22 @@
       busy = false;
     }
   }
+
+  async function sendPasswordReset() {
+    if (!user?.email) return;
+    busy = true;
+    error = '';
+    message = '';
+    try {
+      await resetPassword(user.email);
+      message = `Password reset instructions sent to ${user.email}. Check your inbox and spam folder.`;
+      showToast('Password reset email sent');
+    } catch (caught) {
+      error = typeof caught === 'string' ? caught : caught.message;
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 <Modal
@@ -173,8 +193,11 @@
   {:else if user}
     <p class="hint">Signed in as <strong>{user.email}</strong></p>
     <p class="hint">Rows are stored with owner_id = {user.id.slice(0, 8)}… and protected by row level security.</p>
+    {#if error}<p class="error">{error}</p>{/if}
+    {#if message}<p class="hint">{message}</p>{/if}
     <div class="modal-actions">
       <button class="secondary-button" type="button" onclick={onClose}>Close</button>
+      <button class="secondary-button" type="button" disabled={busy} onclick={sendPasswordReset}>Reset password</button>
       <button class="danger-button" type="button" disabled={busy} onclick={doSignOut}>Sign out</button>
     </div>
   {:else}

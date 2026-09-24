@@ -109,43 +109,103 @@ export function currentMonthExpenses({
 
 /** Workbook pension formula: (1 + annual rate)^(1/12) - 1. */
 export function monthlyPensionRate(annualRate) {
-  const rate = num(annualRate);
-  return Math.pow(1 + rate, 1 / 12) - 1;
+  const safeRate = safeAnnualRate(annualRate, 0);
+  return Math.pow(1 + safeRate, 1 / 12) - 1;
 }
 
-/** Project one annual point per year from the latest value for each series. */
-export function projectPensionSeries({ history = [], pots = [], annualRate = 0.05, years = 10 } = {}) {
+function pensionSeriesKey(row) {
+  return `${seriesNameOf(row)}::${currencyOf(row)}`;
+}
+
+function safeAnnualRate(value, fallback = 0.05) {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
+    const fallbackRate = num(fallback);
+    return Number.isFinite(fallbackRate) && fallbackRate > -1 ? fallbackRate : 0;
+  }
+  const rate = Number(String(value).replace(/,/g, ''));
+  if (Number.isFinite(rate) && rate > -1) return rate;
+  const fallbackRate = num(fallback);
+  return Number.isFinite(fallbackRate) && fallbackRate > -1 ? fallbackRate : 0;
+}
+
+function growthForPension({
+  historyRow,
+  pot,
+  growthByPot,
+  fallbackRate
+}) {
+  const map = growthByPot && typeof growthByPot === 'object' ? growthByPot : {};
+  const potId = String(pot?.id || historyRow?.logicalId || '');
+  if (potId && Object.prototype.hasOwnProperty.call(map, potId)) {
+    return safeAnnualRate(map[potId], fallbackRate);
+  }
+  if (pot?.annualGrowth != null) return safeAnnualRate(pot.annualGrowth, fallbackRate);
+  if (pot?.growth != null) return safeAnnualRate(pot.growth, fallbackRate);
+  if (historyRow?.annualGrowth != null) return safeAnnualRate(historyRow.annualGrowth, fallbackRate);
+  if (historyRow?.growth != null) return safeAnnualRate(historyRow.growth, fallbackRate);
+  return safeAnnualRate(fallbackRate, 0);
+}
+
+/**
+ * Project each pension pot from its latest value using its own annual rate.
+ * Each year is built from twelve compounded monthly periods, rather than a
+ * simple annual/12 assumption:
+ *   monthlyRate = (1 + annualRate)^(1 / 12) - 1
+ */
+export function projectPensionSeries({
+  history = [],
+  pots = [],
+  growthByPot = {},
+  annualRate = 0.05,
+  years = 10
+} = {}) {
+  const potById = new Map(pots.map((pot) => [String(pot?.id || ''), pot]));
+  const potBySeries = new Map(pots.map((pot) => [pensionSeriesKey(pot), pot]));
   const baselines = new Map();
-  [...history].sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).forEach((row) => {
-    const key = `${seriesNameOf(row)}::${currencyOf(row)}`;
-    baselines.set(key, {
-      name: seriesNameOf(row),
-      currency: currencyOf(row),
-      value: num(row.value),
-      annualRate: row.growth != null ? num(row.growth) : null
+
+  [...history]
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+    .forEach((row) => {
+      const pot = potById.get(String(row.logicalId || '')) || potBySeries.get(pensionSeriesKey(row)) || null;
+      baselines.set(pensionSeriesKey(row), { historyRow: row, pot });
     });
+  pots.forEach((pot) => {
+    const key = pensionSeriesKey(pot);
+    if (!baselines.has(key)) baselines.set(key, { historyRow: null, pot });
   });
-  pots.forEach((row) => {
-    const key = `${seriesNameOf(row)}::${currencyOf(row)}`;
-      if (!baselines.has(key)) {
-        baselines.set(key, {
-          name: seriesNameOf(row),
-          currency: currencyOf(row),
-          value: num(row.value),
-          annualRate: row.growth != null ? num(row.growth) : null
-        });
-      }
-  });
-  const series = Array.from(baselines.values()).filter((row) => row.value >= 0);
-  const safeAnnualRate = Math.max(-0.99, num(annualRate));
-  const points = Array.from({ length: Math.max(0, Math.trunc(years) + 1) }, (_, index) => ({
-    year: index,
+
+  const series = Array.from(baselines.values())
+    .map(({ historyRow, pot }) => {
+      const source = historyRow || pot;
+      const value = num(source?.value);
+      const rate = growthForPension({ historyRow, pot, growthByPot, fallbackRate: annualRate });
+      return {
+        id: pot?.id || historyRow?.logicalId || null,
+        name: seriesNameOf(source),
+        currency: currencyOf(source),
+        value,
+        annualRate: rate,
+        monthlyRate: monthlyPensionRate(rate)
+      };
+    })
+    .filter((row) => row.value >= 0);
+
+  const totalYears = Math.max(0, Math.trunc(years));
+  const totalMonths = totalYears * 12;
+  const monthlyPoints = Array.from({ length: totalMonths + 1 }, (_, month) => ({
+    month,
     values: series.map((row) => {
-      const rate = row.annualRate == null ? safeAnnualRate : Math.max(-0.99, row.annualRate);
-      return row.value * Math.pow(1 + rate, index);
+      let value = row.value;
+      for (let step = 0; step < month; step += 1) value *= 1 + row.monthlyRate;
+      return value;
     })
   }));
-  return { series, points, annualRate: num(annualRate) };
+  const points = Array.from({ length: totalYears + 1 }, (_, year) => ({
+    year,
+    values: monthlyPoints[year * 12].values
+  }));
+
+  return { series, points, monthlyPoints, annualRate: num(annualRate) };
 }
 
 /** Redundancy formulas, with safe handling for below-threshold/zero inputs. */

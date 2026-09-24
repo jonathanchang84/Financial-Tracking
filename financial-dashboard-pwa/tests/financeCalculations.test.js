@@ -110,6 +110,51 @@ test('pension monthly rate and annual projection match the workbook formulas', (
   assert.ok(Math.abs(projection.points[1].values[1] - 62640) < 0.0001);
 });
 
+test('pension projection applies different annual rates and compounds monthly', () => {
+  const projection = projectPensionSeries({
+    pots: [
+      { id: 'ubs', name: 'UBS', value: 1000, currencyCode: 'USD' },
+      { id: 'hsbc', name: 'HSBC', value: 2000, currencyCode: 'USD' }
+    ],
+    growthByPot: { ubs: 0.08, hsbc: 0.04 },
+    annualRate: 0.05,
+    years: 1
+  });
+  assert.equal(projection.series[0].annualRate, 0.08);
+  assert.equal(projection.series[1].annualRate, 0.04);
+  assert.ok(Math.abs(projection.monthlyPoints[1].values[0] - 1000 * (1 + monthlyPensionRate(0.08))) < 0.0001);
+  assert.ok(Math.abs(projection.points[1].values[0] - 1000 * 1.08) < 0.0001);
+  assert.ok(Math.abs(projection.points[1].values[1] - 2000 * 1.04) < 0.0001);
+});
+
+test('pension projection uses the global rate only when a pot has no saved rate', () => {
+  const projection = projectPensionSeries({
+    pots: [{ id: 'ubs', name: 'UBS', value: 1000, currencyCode: 'USD' }],
+    growthByPot: { ubs: 0.08 },
+    annualRate: 0.05,
+    years: 1
+  });
+  assert.equal(projection.series[0].annualRate, 0.08);
+  assert.ok(Math.abs(projection.points[1].values[0] - 1080) < 0.0001);
+});
+
+test('pension growth follows a pot stable logical id across snapshot versions', () => {
+  const projection = projectPensionSeries({
+    history: [
+      { logicalId: 'pot-1', series: 'UBS', date: '2026-01-01', value: 900, currencyCode: 'USD' },
+      { logicalId: 'pot-1', series: 'UBS', date: '2026-02-01', value: 1000, currencyCode: 'USD' }
+    ],
+    pots: [{ id: 'pot-1', name: 'UBS', value: 1000, currencyCode: 'USD' }],
+    growthByPot: { 'pot-1': 0.08 },
+    annualRate: 0.05,
+    years: 1
+  });
+  assert.equal(projection.series.length, 1);
+  assert.equal(projection.series[0].id, 'pot-1');
+  assert.equal(projection.series[0].annualRate, 0.08);
+  assert.ok(Math.abs(projection.points[1].values[0] - 1080) < 0.0001);
+});
+
 test('redundancy projection matches the workbook tax and runway scenarios', () => {
   const result = redundancyProjection({
     payout: 71855.77,
