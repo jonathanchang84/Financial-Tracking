@@ -3,8 +3,8 @@
    * Shared screen for Accounts (`netWorth`), Investments (`holdings`) and
    * Pensions (`pensions`).
    *
-   * Shows the current records, the open snapshot per series and the full SCD
-   * Type 2 version trail (validFrom / validTo / currentFlag).
+   * Shows current records, open snapshots, and a monthly value comparison table.
+   * The underlying SCD Type 2 version trail remains available for editing.
    */
   import { get } from 'svelte/store';
   import {
@@ -33,13 +33,14 @@
   import { isCurrentVersion } from '../services/scd2.js';
   import { num, currencyOf, seriesNameOf } from '../services/runway.js';
   import { monthlyPensionRate, projectPensionSeries } from '../services/financeCalculations.js';
+  import { buildMonthlyHistoryTable } from '../services/monthlyHistory.js';
   import { todayISO } from '../services/recordHelpers.js';
   import { longLabel } from '../services/dates.js';
   import { showToast, errorToast } from '../stores/ui.js';
   import CurrencySelect from './CurrencySelect.svelte';
   import RecordList from './RecordList.svelte';
   import PositionUpdateModal from './PositionUpdateModal.svelte';
-  import HistoryTrend from './HistoryTrend.svelte';
+  import MonthlyHistoryTable from './MonthlyHistoryTable.svelte';
   import PensionProjection from './PensionProjection.svelte';
 
   // `entityKey` is fixed per instance (App renders one screen per view).
@@ -60,7 +61,6 @@
     growth: '5'
   });
   let modal = $state(null);
-  let showAllHistory = $state(false);
 
   const codes = Object.keys(RATES);
 
@@ -98,37 +98,17 @@
       }))
   );
 
-  const versionRows = $derived(
-    ($historyStore || [])
-      .slice()
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .map((row) => ({
-        id: row.id,
-        title: `${seriesNameOf(row)} · ${money(num(row.value), currencyOf(row))}`,
-        subtitle: `${longLabel(row.date)} · ${currencyOf(row)} · valid from ${row.validFrom || row.date}${
-          row.validTo ? ` to ${row.validTo}` : ' (open)'
-        }`,
-        badges: [isCurrentVersion(row) ? { label: 'Current', tone: 'current' } : { label: 'Closed', tone: 'closed' }],
-        raw: row
-      }))
-  );
-
-  const visibleVersions = $derived(showAllHistory ? versionRows : versionRows.slice(0, 25));
-
   const totals = $derived(totalsByCurrency($store || [], entityValue));
   const totalInDisplay = $derived(
     Object.entries(totals).reduce((sum, [code, value]) => sum + convertCurrency(value, code, $displayCurrency), 0)
   );
-  const historyPoints = $derived.by(() => {
-    const grouped = new Map();
-    for (const row of $historyStore || []) {
-      const date = String(row.validFrom || row.date || '');
-      if (!date) continue;
-      const value = convertCurrency(num(row.value), currencyOf(row), $displayCurrency);
-      grouped.set(date, (grouped.get(date) || 0) + value);
-    }
-    return Array.from(grouped, ([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
-  });
+  const monthlyHistory = $derived.by(() =>
+    buildMonthlyHistoryTable({
+      rows: $historyStore || [],
+      readValue: entityKey === 'netWorth' ? signedValue : (row) => num(row.value),
+      convert: (value, currency) => convertCurrency(value, currency, $displayCurrency)
+    })
+  );
   const pensionProjection = $derived(
     projectPensionSeries({
       history: $historyStore || [],
@@ -301,11 +281,15 @@
   <section class="panel">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">HISTORY</p>
-        <h3>{entityKey === 'holdings' ? 'Portfolio value over time' : entityKey === 'pensions' ? 'Pension value over time' : 'Net worth over time'}</h3>
+        <p class="eyebrow">MONTHLY COMPARISON</p>
+        <h3>{entityKey === 'holdings' ? 'Portfolio value by month' : entityKey === 'pensions' ? 'Pension value by month' : 'Net worth by month'}</h3>
+        <p class="hint">Each item shows its last recorded value in the month. Percent change compares with the immediately preceding month.</p>
       </div>
     </div>
-    <HistoryTrend points={historyPoints} title={entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'} />
+    <MonthlyHistoryTable
+      table={monthlyHistory}
+      emptyMessage="Record dated snapshots to see the monthly comparison."
+    />
   </section>
 
   {#if entityKey === 'pensions'}
@@ -346,25 +330,6 @@
     />
   </section>
 
-  <section class="panel">
-    <div class="section-heading">
-      <div>
-        <p class="eyebrow">HISTORY</p>
-        <h3>SCD Type 2 version trail</h3>
-        <p class="hint">Every valuation keeps its validFrom / validTo window instead of being overwritten.</p>
-      </div>
-      {#if versionRows.length > 25}
-        <button class="text-button" type="button" onclick={() => (showAllHistory = !showAllHistory)}>
-          {showAllHistory ? 'Show fewer' : `Show all ${versionRows.length}`}
-        </button>
-      {/if}
-    </div>
-    <RecordList
-      rows={visibleVersions}
-      emptyMessage="No snapshot history yet."
-      onEdit={(row) => openModal('version', row)}
-    />
-  </section>
 </section>
 
 {#if modal}

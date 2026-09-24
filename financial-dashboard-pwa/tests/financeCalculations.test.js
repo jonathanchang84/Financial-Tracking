@@ -9,6 +9,7 @@ import {
   projectPensionSeries,
   redundancyProjection
 } from '../src/services/financeCalculations.js';
+import { buildMonthlyHistoryTable } from '../src/services/monthlyHistory.js';
 import { runwayPlanner } from '../src/services/runway.js';
 
 test('daysUntilPayday uses the workbook exclusive date difference', () => {
@@ -121,4 +122,66 @@ test('redundancy projection matches the workbook tax and runway scenarios', () =
   assert.ok(Math.abs(result.scenarios[0].months - 9.5023210345) < 0.0001);
   assert.ok(Math.abs(result.scenarios[1].months - 10.8065611765) < 0.0001);
   assert.ok(Math.abs(result.scenarios[2].months - 14.5035426316) < 0.0001);
+});
+
+test('monthly history uses the last snapshot in each month and keeps missing months', () => {
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { series: 'Savings 1', date: '2026-01-10', value: 100, currencyCode: 'USD' },
+      { series: 'Savings 1', date: '2026-01-25', value: 120, currencyCode: 'USD' },
+      { series: 'Savings 1', date: '2026-03-02', value: 144, currencyCode: 'USD' },
+      { series: 'Savings 2', date: '2026-01-31', value: 50, currencyCode: 'USD' },
+      { series: 'Savings 2', date: '2026-03-31', value: 0, currencyCode: 'USD' }
+    ]
+  });
+  assert.deepEqual(table.months, ['2026-01', '2026-02', '2026-03']);
+  assert.equal(table.columns.length, 2);
+  assert.equal(table.rows[0].cells['Savings 1::USD'].value, 120);
+  assert.equal(table.rows[0].cells['Savings 1::USD'].change, null);
+  assert.equal(table.rows[1].cells['Savings 1::USD'].value, null);
+  assert.equal(table.rows[1].cells['Savings 1::USD'].change, null);
+  assert.equal(table.rows[2].cells['Savings 1::USD'].value, 144);
+  assert.equal(table.rows[2].cells['Savings 1::USD'].change, null);
+  assert.equal(table.rows[2].cells['Savings 2::USD'].value, 0);
+  assert.equal(table.rows[2].cells['Savings 2::USD'].change, null);
+});
+
+test('monthly history calculates adjacent month change and separates currencies', () => {
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { series: 'Savings', date: '2026-01-15', value: 100, currencyCode: 'USD' },
+      { series: 'Savings', date: '2026-02-15', value: 110, currencyCode: 'USD' },
+      { series: 'Savings', date: '2026-01-15', value: 100, currencyCode: 'GBP' },
+      { series: 'Savings', date: '2026-02-15', value: 121, currencyCode: 'GBP' }
+    ],
+    convert: (value, currency) => currency === 'GBP' ? value * 2 : value
+  });
+  assert.deepEqual(table.columns.map((column) => column.key), ['Savings::GBP', 'Savings::USD']);
+  assert.equal(table.rows[1].cells['Savings::USD'].change, 10);
+  assert.equal(table.rows[1].cells['Savings::USD'].value, 110);
+  assert.equal(table.rows[1].cells['Savings::GBP'].value, 242);
+  assert.equal(table.rows[1].cells['Savings::GBP'].change, 21);
+});
+
+test('monthly history returns an empty shape without valid dated snapshots', () => {
+  assert.deepEqual(buildMonthlyHistoryTable({ rows: [{ series: 'Missing date' }] }), {
+    months: [], columns: [], rows: []
+  });
+});
+
+test('monthly history does not invoke the value reader for missing cells', () => {
+  let calls = 0;
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { series: 'Savings', date: '2026-01-10', value: 100, currencyCode: 'USD' },
+      { series: 'Savings', date: '2026-03-10', value: 120, currencyCode: 'USD' }
+    ],
+    readValue: (row) => {
+      calls += 1;
+      return row.value;
+    }
+  });
+  assert.equal(calls, 3);
+  assert.equal(table.rows[1].cells['Savings::USD'].value, null);
+  assert.equal(table.rows[1].cells['Savings::USD'].change, null);
 });
