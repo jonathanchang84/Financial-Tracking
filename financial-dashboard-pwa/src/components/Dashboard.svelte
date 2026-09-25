@@ -88,14 +88,17 @@
     <article class="fh-metric">
       <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
       <strong>{inDisplay(plan.safeToday)}</strong>
-      <p class="hint">After planned Spend Items and bills through payday</p>
+      <p class="hint">After reserving {inDisplay(plan.obligationTotal)} of planned obligations; hypothetical</p>
     </article>
     <article class="fh-metric">
-      <p class="eyebrow">PROJECTED AT PAYDAY</p>
+      <p class="eyebrow">DAYS UNTIL NEXT PAYDAY</p>
+      <strong>{plan.daysUntilPayday || 0}</strong>
+      <p class="hint">Calendar days from today to the next logged payday</p>
+    </article>
+    <article class="fh-metric">
+      <p class="eyebrow">BALANCE AT PAYDAY</p>
       <strong>{inDisplay(plan.projectedAtPayday)}</strong>
-      <p class="hint">
-        Spend Items {inDisplay(plan.scheduledCommitments)} · bills {inDisplay(plan.scheduledBills)}
-      </p>
+      <p class="hint">After bills and Spend Items; hypothetical Safe to Spend is not deducted</p>
     </article>
     <article class="fh-metric">
       <p class="eyebrow">INVESTMENTS</p>

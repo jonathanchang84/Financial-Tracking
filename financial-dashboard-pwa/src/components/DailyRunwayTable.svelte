@@ -1,7 +1,7 @@
 <script>
   /**
-   * Daily runway grid — starting balance, safe-to-spend amount, Spend Items,
-   * cumulative Spend Items, scheduled bills and ending balance.
+   * Daily runway grid — starting balance, hypothetical safe-to-spend amount,
+   * Spend Items, cumulative hypothetical safe spend, bills and actual ending balance.
    */
   import { displayCurrency, convertCurrency, money } from '../stores/finance.js';
 
@@ -36,7 +36,7 @@
           <th scope="col">Starting</th>
           <th scope="col">Safe to spend</th>
           <th scope="col">Spend Items</th>
-          <th scope="col">Cumulative Spend Items</th>
+          <th scope="col">Cumulative safe spend amount</th>
           <th scope="col">Scheduled bills</th>
           <th scope="col">Ending</th>
         </tr>
@@ -51,7 +51,7 @@
             <td>{fmt(row.starting)}</td>
             <td>{fmt(row.safe)}</td>
             <td class:strong={row.commitments > 0}>{fmt(row.commitments)}</td>
-            <td>{fmt(row.cumulative)}</td>
+            <td>{fmt(row.cumulativeSafeSpend)}</td>
             <td class:strong={row.bills > 0}>{fmt(row.bills)}</td>
             <td class="strong" class:negative={row.ending < 0}>{fmt(row.ending)}</td>
           </tr>
@@ -60,7 +60,7 @@
     </table>
   </div>
   <p class="hint">
-    Safe today reserves scheduled bills and Spend Items before dividing the remaining cash across the cycle.
-    Saturday and Sunday bill due dates shift forward to Monday.
+    Safe to spend reserves the remaining unpaid bills and Spend Items and divides the obligations-only cash by the remaining days before payday.
+    It is hypothetical, so it does not reduce Starting or Ending. Saturday and Sunday bill due dates shift forward to Monday.
   </p>
 {/if}

@@ -90,8 +90,8 @@ test('runway excludes paid bills and spend items from safe-to-spend obligations'
     paidExpenses: { 'bill:rent:2026-09': true, 'commitment:food': true }
   });
   assert.equal(plan.obligationTotal, 0);
-  assert.equal(plan.safeToday, 250);
-  assert.equal(plan.projectedAtPayday, 0);
+  assert.equal(plan.safeToday, 500);
+  assert.equal(plan.projectedAtPayday, 1000);
 });
 
 test('pension monthly rate and annual projection match the workbook formulas', () => {

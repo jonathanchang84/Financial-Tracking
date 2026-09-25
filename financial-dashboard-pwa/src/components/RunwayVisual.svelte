@@ -42,7 +42,7 @@
     <div class="runway-chart-wrap">
       <svg class="runway-chart" viewBox="0 0 640 220" role="img" aria-label={chartLabel}>
         <title>{chartLabel}</title>
-        <desc>Ending balance after safe daily spending, Spend Items and scheduled bills.</desc>
+        <desc>Actual ending balance after Spend Items and scheduled bills; hypothetical safe spending is not deducted.</desc>
         <line class="runway-zero" x1="24" x2="616" y1={184 - ((0 - chartMin) / (chartMax - chartMin || 1)) * 150} y2={184 - ((0 - chartMin) / (chartMax - chartMin || 1)) * 150} />
         <polyline points={chartPoints} />
         {#each rows as row, index}

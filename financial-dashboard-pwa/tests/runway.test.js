@@ -21,27 +21,41 @@ test('one row per day from today through payday, inclusive', () => {
   assert.equal(rows[9].dayNumber, 10);
 });
 
-test('safe amount spreads the balance across the cycle and ending lands on zero', () => {
+test('safe amount uses the exclusive payday distance minus one without changing balances', () => {
   const rows = buildDailyRunway(base);
-  assert.equal(rows[0].safe, 90);
+  const second = rows[1];
+  assert.equal(rows[0].safeDays, 8);
+  assert.equal(rows[0].safe, 900 / 8);
   assert.equal(rows[0].starting, 900);
-  assert.equal(rows[0].ending, 810);
-  assert.equal(rows[9].ending, 0, 'spending the safe amount every day leaves nothing');
+  assert.equal(rows[0].ending, 900);
+  assert.equal(rows.at(-1).ending, 900, 'hypothetical safe spending never reduces the actual balance');
+  assert.equal(rows[0].cumulativeSafeSpend, 900 / 8);
+  assert.equal(second.safe, 900 / 7);
+  assert.equal(second.cumulativeSafeSpend, 900 / 8 + 900 / 7);
 });
 
-test('planned Spend Items reduce that day and are carried cumulatively', () => {
+test('future obligations are reserved while actual balances change only when charged', () => {
   const rows = buildDailyRunway({
     ...base,
-    commitments: [{ name: 'Food shop', date: '2026-03-05', amount: 50, currencyCode: 'USD' }]
+    bills: [{ id: 'energy', name: 'Energy', amount: 100, dueDay: 8, currencyCode: 'USD' }],
+    commitments: [{ id: 'food', name: 'Food shop', date: '2026-03-05', amount: 50, currencyCode: 'USD' }]
   });
-  const day = rows.find((row) => row.date === '2026-03-05');
-  const next = rows.find((row) => row.date === '2026-03-06');
-  assert.equal(rows[0].safe, 85, 'the 50-pound Spend Item is reserved before daily spending');
-  assert.equal(day.commitments, 50);
-  assert.equal(day.cumulative, 50);
-  assert.equal(day.ending, 900 - 5 * 85 - 50, 'five safe days plus the Spend Item');
-  assert.equal(next.cumulative, 50, 'cumulative persists across days');
-  assert.equal(next.starting, day.ending);
+  const foodDay = rows.find((row) => row.date === '2026-03-05');
+  const dayAfterFood = rows.find((row) => row.date === '2026-03-06');
+  const energyDay = rows.find((row) => row.date === '2026-03-09');
+
+  assert.equal(rows[0].safe, 750 / 8, 'today reserves the future bill and Spend Item');
+  assert.equal(rows[0].starting, 900);
+  assert.equal(rows[0].ending, 900);
+  assert.equal(foodDay.commitments, 50);
+  assert.equal(foodDay.starting, 900);
+  assert.equal(foodDay.ending, 850, 'only the actual Spend Item changes Ending');
+  assert.equal(dayAfterFood.starting, foodDay.ending);
+  assert.equal(dayAfterFood.ending, 850, 'hypothetical safe spending is not deducted');
+  assert.equal(energyDay.bills, 100);
+  assert.equal(energyDay.ending, 750, 'Ending equals available balance minus actual obligations');
+  assert.equal(rows.at(-1).ending, 750);
+  assert.equal(rows.at(-1).cumulativeSafeSpend, rows.reduce((sum, row) => sum + row.safe, 0));
 });
 
 test('scheduled bills charge on the weekend-shifted Monday, never on the weekend', () => {
@@ -80,13 +94,14 @@ test('missing balance, missing payday or a payday in the past returns no rows', 
   assert.deepEqual(buildDailyRunway({ ...base, payday: '2026-02-01' }), [], 'payday already happened');
 });
 
-test('planner summarises the full cycle while truncating only rendered rows', () => {
+test('planner summarises obligations while truncating only rendered rows', () => {
   const plan = runwayPlanner(base);
   assert.equal(plan.dayCount, 10);
+  assert.equal(plan.daysUntilPayday, 9);
   assert.equal(plan.renderedDays, 10);
   assert.equal(plan.truncated, false);
-  assert.equal(plan.safeToday, 90);
-  assert.equal(plan.projectedAtPayday, 0);
+  assert.equal(plan.safeToday, 900 / 8);
+  assert.equal(plan.projectedAtPayday, 900);
   assert.equal(plan.scheduledBills, 0);
   assert.equal(plan.scheduledCommitments, 0);
 
@@ -97,11 +112,12 @@ test('planner summarises the full cycle while truncating only rendered rows', ()
     commitments: [{ name: 'Late repair', date: '2026-04-20', amount: 300, currencyCode: 'USD' }]
   });
   assert.equal(longPlan.dayCount, 62);
+  assert.equal(longPlan.daysUntilPayday, 61);
   assert.equal(longPlan.renderedDays, 45);
   assert.equal(longPlan.truncated, true);
   assert.equal(longPlan.scheduledCommitments, 300, 'summary includes an obligation after the rendered cap');
-  assert.equal(round(longPlan.safeToday), round((9000 - 300) / 62));
-  assert.equal(longPlan.projectedAtPayday, 0);
+  assert.equal(round(longPlan.safeToday), round((9000 - 300) / 60));
+  assert.equal(longPlan.projectedAtPayday, 8700);
 });
 
 test('runway handles same-day, malformed and past paydays explicitly', () => {

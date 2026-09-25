@@ -1,10 +1,11 @@
 /**
  * Daily runway math — the single source of truth for cash-flow projections.
  *
- * Ported from the historic `pwa/app.js` `renderCashflow()`:
+ * Runway rules:
  *   - one row per day from today through payday, inclusive
- *   - safeToday = max(0, balance - unpaid cycle obligations) / inclusive day count
- *   - ending = starting - safeToday - Spend Items(today) - scheduled bills(today)
+ *   - safe to spend reserves all unpaid bills and Spend Items remaining in the cycle
+ *   - safe to spend is hypothetical and never reduces Starting or Ending
+ *   - Ending changes only for actual Spend Items and bills on that day
  *   - Saturday / Sunday bill due dates shift forward to Monday
  *
  * Every function here is pure so it can be unit-tested under `node --test`
@@ -59,7 +60,7 @@ function runwayWindow(today, payday) {
   const start = startOfDay(today);
   const end = startOfDay(payday);
   if (end < start) return null;
-  return { start, end, dayCount: daysBetweenInclusive(start, end) };
+  return { start, end, dayCount: daysBetweenInclusive(start, end), daysUntilPayday: daysBetween(start, end) };
 }
 
 /** A weekend shift can move a bill into the following month; check both months. */
@@ -76,72 +77,74 @@ function billOccurrenceMonth(bill, date) {
   return dayKey(previousMonth).slice(0, 7);
 }
 
-function obligationTotals({ bills, commitments, currency, start, end, dayCount, paidExpenses = {} }) {
-  const relevantBills = bills.filter((bill) => inCurrency(bill, currency) && bill.active !== false);
-  const relevantCommitments = commitments.filter((item) => inCurrency(item, currency));
-  let scheduledBills = 0;
-  let scheduledCommitments = 0;
-
-  datesThrough(start, end, dayCount).forEach((date) => {
-    const key = dayKey(date);
-    relevantBills.forEach((bill) => {
-      const occurrenceMonth = billOccurrenceMonth(bill, date);
-      if (billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, occurrenceMonth)) {
-        scheduledBills += num(bill.amount);
-      }
-    });
-    relevantCommitments.forEach((item) => {
-      if (
-        dayKey(item.date) === key &&
-        !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
-      ) {
-        scheduledCommitments += num(item.amount);
-      }
-    });
-  });
-
-  return { scheduledBills, scheduledCommitments, total: scheduledBills + scheduledCommitments };
+function scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses }) {
+  const key = dayKey(date);
+  const commitments = relevantCommitments.reduce(
+    (sum, item) =>
+      dayKey(item.date) === key && !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
+        ? sum + num(item.amount)
+        : sum,
+    0
+  );
+  const bills = relevantBills.reduce(
+    (sum, bill) =>
+      billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date))
+        ? sum + num(bill.amount)
+        : sum,
+    0
+  );
+  return { commitments, bills, total: commitments + bills };
 }
 
-function buildRunwayRows({
-  start,
-  end,
-  dayCount,
-  amount,
-  safe,
-  bills,
-  commitments,
-  currency,
-  maxDays,
-  paidExpenses = {}
-}) {
+function runwayObligations({ bills, commitments, currency, start, end, dayCount, paidExpenses = {} }) {
   const relevantBills = bills.filter((bill) => inCurrency(bill, currency) && bill.active !== false);
   const relevantCommitments = commitments.filter((item) => inCurrency(item, currency));
-  const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
-  let running = amount;
-  let cumulative = 0;
+  const schedule = datesThrough(start, end, dayCount).map((date) => ({
+    date: dayKey(date),
+    ...scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses })
+  }));
+  const totals = schedule.reduce(
+    (result, row) => ({
+      scheduledBills: result.scheduledBills + row.bills,
+      scheduledCommitments: result.scheduledCommitments + row.commitments
+    }),
+    { scheduledBills: 0, scheduledCommitments: 0 }
+  );
+  const remainingTotals = [];
+  let remainingTotal = 0;
+  for (let index = schedule.length - 1; index >= 0; index -= 1) {
+    remainingTotal += schedule[index].total;
+    remainingTotals[index] = remainingTotal;
+  }
+  return {
+    ...totals,
+    total: totals.scheduledBills + totals.scheduledCommitments,
+    schedule: schedule.map((row, index) => ({ ...row, remainingTotal: remainingTotals[index] }))
+  };
+}
 
-  return datesThrough(start, end, renderLimit).map((date, index) => {
+function safeToSpend({ obligationsOnlyCash, daysUntilPayday }) {
+  const denominator = Math.max(1, Math.max(0, daysUntilPayday) - 1);
+  return Math.max(0, num(obligationsOnlyCash)) / denominator;
+}
+
+function buildRunwayRows({ start, end, dayCount, amount, schedule, currency, maxDays }) {
+  const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
+  const scheduleByDate = new Map(schedule.map((row) => [row.date, row]));
+  let running = amount;
+  let cumulativeSafeSpend = 0;
+  const renderedDates = datesThrough(start, end, renderLimit);
+
+  return renderedDates.map((date, index) => {
     const key = dayKey(date);
     const starting = running;
-    const spendItemsToday = relevantCommitments.reduce(
-      (sum, item) =>
-        dayKey(item.date) === key && !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
-          ? sum + num(item.amount)
-          : sum,
-      0
-    );
-    const billsToday = relevantBills.reduce(
-      (sum, bill) =>
-        billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date))
-          ? sum + num(bill.amount)
-          : sum,
-      0
-    );
-
-    cumulative += spendItemsToday;
-    const ending = starting - safe - spendItemsToday - billsToday;
+    const obligationsToday = scheduleByDate.get(key) || { commitments: 0, bills: 0, total: 0, remainingTotal: 0 };
+    const obligationsOnlyCash = starting - obligationsToday.remainingTotal;
+    const daysUntilPayday = Math.max(0, daysBetween(date, end));
+    const safe = safeToSpend({ obligationsOnlyCash, daysUntilPayday });
+    const ending = starting - obligationsToday.total;
     running = ending;
+    cumulativeSafeSpend += safe;
 
     return {
       date: key,
@@ -150,9 +153,11 @@ function buildRunwayRows({
       dayNumber: index + 1,
       starting,
       safe,
-      commitments: spendItemsToday,
-      cumulative,
-      bills: billsToday,
+      safeDays: Math.max(1, daysUntilPayday - 1),
+      obligationsOnlyCash,
+      commitments: obligationsToday.commitments,
+      cumulativeSafeSpend,
+      bills: obligationsToday.bills,
       ending,
       currency
     };
@@ -177,10 +182,8 @@ export function buildDailyRunway({
   const window = runwayWindow(today, payday);
   if (!(amount > 0) || !window) return [];
 
-  const obligations = obligationTotals({ bills, commitments, currency, paidExpenses, ...window });
-  const cashAfterPlannedSpend = amount - obligations.total;
-  const safe = Math.max(0, cashAfterPlannedSpend) / window.dayCount;
-  return buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays, paidExpenses });
+  const obligations = runwayObligations({ bills, commitments, currency, paidExpenses, ...window });
+  return buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays });
 }
 
 /** Build the grid and full-cycle summary figures used by the screens. */
@@ -199,12 +202,13 @@ export function runwayPlanner({
   const window = runwayWindow(today, payday);
   const paydayPast = hasPayday && startOfDay(payday) < startOfDay(today);
   const obligations = window
-    ? obligationTotals({ bills, commitments, currency, paidExpenses, ...window })
-    : { scheduledBills: 0, scheduledCommitments: 0, total: 0 };
+    ? runwayObligations({ bills, commitments, currency, paidExpenses, ...window })
+    : { scheduledBills: 0, scheduledCommitments: 0, total: 0, schedule: [] };
   const cashAfterPlannedSpend = window ? amount - obligations.total : amount;
-  const safe = window ? Math.max(0, cashAfterPlannedSpend) / window.dayCount : 0;
+  const daysUntilPayday = window?.daysUntilPayday || 0;
+  const safe = window ? safeToSpend({ obligationsOnlyCash: cashAfterPlannedSpend, daysUntilPayday }) : 0;
   const rows = window && amount > 0
-    ? buildRunwayRows({ ...window, amount, safe, bills, commitments, currency, maxDays, paidExpenses })
+    ? buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays })
     : [];
   const dayCount = window?.dayCount || 0;
   const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
@@ -216,13 +220,13 @@ export function runwayPlanner({
     payday: hasPayday ? dayKey(payday) : '',
     paydayPast,
     dayCount,
-    daysUntilPayday: window ? daysBetween(startOfDay(today), startOfDay(payday)) : 0,
+    daysUntilPayday,
     renderedDays: rows.length,
     truncated: dayCount > renderLimit,
     safeToday: safe,
     cashAfterPlannedSpend,
     shortfall: Math.max(0, -cashAfterPlannedSpend),
-    projectedAtPayday: window ? amount - safe * dayCount - obligations.total : 0,
+    projectedAtPayday: window ? amount - obligations.total : 0,
     scheduledBills: obligations.scheduledBills,
     scheduledCommitments: obligations.scheduledCommitments,
     obligationTotal: obligations.total

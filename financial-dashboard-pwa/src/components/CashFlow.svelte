@@ -231,7 +231,7 @@
       <article class="fh-metric">
         <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
         <strong>{inDisplay(plan.safeToday)}</strong>
-        <p class="hint">After reserving {inDisplay(plan.obligationTotal)} of planned obligations</p>
+        <p class="hint">After reserving {inDisplay(plan.obligationTotal)}; hypothetical and spread before payday</p>
       </article>
       <article class="fh-metric">
         <p class="eyebrow">DAYS UNTIL PAYDAY</p>
@@ -242,14 +242,14 @@
         </p>
       </article>
       <article class="fh-metric">
-        <p class="eyebrow">CASH AFTER PLANNED SPEND</p>
+        <p class="eyebrow">CASH AFTER BILLS & SPEND ITEMS</p>
         <strong class:negative={plan.cashAfterPlannedSpend < 0}>{inDisplay(plan.cashAfterPlannedSpend)}</strong>
         <p class="hint">{plan.shortfall > 0 ? `${inDisplay(plan.shortfall)} short of obligations` : 'Available for the cycle after obligations'}</p>
       </article>
       <article class="fh-metric">
-        <p class="eyebrow">PROJECTED AT PAYDAY</p>
+        <p class="eyebrow">BALANCE AT PAYDAY</p>
         <strong class:negative={plan.projectedAtPayday < 0}>{inDisplay(plan.projectedAtPayday)}</strong>
-        <p class="hint">After safe spend, Spend Items and bills</p>
+        <p class="hint">After bills and Spend Items only; Safe to Spend is hypothetical</p>
       </article>
     </div>
   </section>
@@ -276,7 +276,7 @@
       <div>
         <p class="eyebrow">DAILY VIEW</p>
         <h3>Daily runway table</h3>
-        <p class="hint">One row per day: starting balance, safe-to-spend amount, Spend Items, cumulative Spend Items, bills and ending balance.</p>
+        <p class="hint">One row per day: starting balance, hypothetical Safe to Spend, Spend Items, cumulative safe spend amount, bills and the actual obligations-only ending balance.</p>
       </div>
     </div>
     <DailyRunwayTable
