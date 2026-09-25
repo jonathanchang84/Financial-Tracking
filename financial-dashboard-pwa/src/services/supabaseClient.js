@@ -9,9 +9,36 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { writable, get } from 'svelte/store';
+import { inspectAuthCallback, stripAuthCallback } from './authRecovery.js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const initialCallback = inspectAuthCallback(typeof window === 'undefined' ? '' : window.location.href);
+
+export const session = writable(null);
+export const authReady = writable(false);
+export const authError = writable('');
+/** True while the user has a valid Supabase recovery session awaiting a new password. */
+export const passwordRecovery = writable(initialCallback.isRecovery);
+export const recoveryError = writable(initialCallback.error || '');
+
+function syncRecoveryFromUrl() {
+  if (typeof window === 'undefined') return initialCallback;
+  const callback = inspectAuthCallback(window.location.href);
+  if (callback.isRecovery) passwordRecovery.set(true);
+  if (callback.error) recoveryError.set(callback.error);
+  return callback;
+}
+
+/** Dismiss the recovery UI and remove callback tokens from the address bar. */
+export function clearPasswordRecovery() {
+  passwordRecovery.set(false);
+  recoveryError.set('');
+  if (typeof window !== 'undefined' && window.history?.replaceState) {
+    const cleanUrl = stripAuthCallback(window.location.href);
+    if (cleanUrl && cleanUrl !== window.location.href) window.history.replaceState(window.history.state, '', cleanUrl);
+  }
+}
 
 export const supabase =
   url && anonKey
@@ -20,6 +47,7 @@ export const supabase =
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
+          flowType: 'pkce',
           storageKey: 'financial-health-auth'
         },
         global: { headers: { 'x-application-name': 'financial-dashboard-pwa' } }
@@ -29,18 +57,18 @@ export const supabase =
 export const cloudEnabled = Boolean(supabase);
 export const cloudTarget = url || '';
 
-/** Signed-in Supabase user, or `null` when running anonymously. */
-export const session = writable(null);
-export const authReady = writable(false);
-export const authError = writable('');
-/**
- * True when the user arrived via a password-recovery email link — the app
- * should open the Auth modal in "set new password" mode.
- */
-export const passwordRecovery = writable(false);
-
-export function clearPasswordRecovery() {
-  passwordRecovery.set(false);
+// Register the core auth listener immediately. The SDK may emit
+// PASSWORD_RECOVERY while it is consuming the callback URL, before the sync
+// engine has finished booting its own listener.
+if (supabase) {
+  supabase.auth.onAuthStateChange((event, next) => {
+    session.set(next?.user ?? null);
+    authReady.set(true);
+    if (event === 'PASSWORD_RECOVERY') {
+      passwordRecovery.set(true);
+      recoveryError.set('');
+    }
+  });
 }
 
 export function currentUser() {
@@ -52,17 +80,17 @@ export async function restoreSession() {
     authReady.set(true);
     return null;
   }
+  const callback = syncRecoveryFromUrl();
   try {
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+    if (error && callback.isRecovery) recoveryError.set(friendlyAuthError(error));
     session.set(data?.session?.user ?? null);
-    // Fallback for the recovery link: the PASSWORD_RECOVERY event can fire
-    // during client init before listeners attach, but the URL still carries
-    // type=recovery (implicit flow) at that point.
-    if (!get(passwordRecovery) && /type=recovery/.test(location.hash)) {
-      passwordRecovery.set(true);
-    }
-  } catch {
+    // The SDK consumes callback parameters asynchronously. Re-check after it
+    // has completed so a recovery session cannot be lost during app boot.
+    syncRecoveryFromUrl();
+  } catch (error) {
     session.set(null);
+    if (callback.isRecovery) recoveryError.set(friendlyAuthError(error));
   } finally {
     authReady.set(true);
   }
@@ -122,7 +150,9 @@ export async function resendConfirmation(email) {
 export async function resetPassword(email) {
   if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${location.origin}${location.pathname}`
+    // Keep this URL in Supabase Authentication → URL Configuration →
+    // Redirect URLs. The app handles the returned session in a modal.
+    redirectTo: `${location.origin}/?auth=reset`
   });
   if (error) throw friendlyAuthError(error);
 }
@@ -132,7 +162,7 @@ export async function updatePassword(newPassword) {
   if (!supabase) throw new Error('Cloud sync is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) throw friendlyAuthError(error);
-  passwordRecovery.set(false);
+  clearPasswordRecovery();
 }
 
 /**
@@ -163,7 +193,7 @@ export function friendlyAuthError(error) {
   if (/password should be at least/i.test(message)) {
     return 'Password must be at least 6 characters.';
   }
-  if (/link is invalid or has expired|token has expired|expired/i.test(message)) {
+  if (/link is invalid or has expired|token has expired|auth session missing|recovery session missing|expired/i.test(message)) {
     return 'This reset link has expired or was already used — request a new one.';
   }
   if (/user not found/i.test(message)) {

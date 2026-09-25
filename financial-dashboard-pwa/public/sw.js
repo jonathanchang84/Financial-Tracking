@@ -1,5 +1,5 @@
 /* Offline-first service worker for the compiled Vite `/dist` build. */
-const VERSION = 'findash-v10';
+const VERSION = 'findash-v11';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];

@@ -25,4 +25,4 @@ Pages build command: `npm run build`. Output directory: `dist`.
 
 Copy `.env.example` to `.env` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Apply `supabase/schema.sql` in the Supabase SQL editor. Without those variables the app stays fully local.
 
-Sign-in is optional. The dashboard works offline with no session.
+- Sign-in is optional. The dashboard works offline with no session. Password-recovery emails return to `/?auth=reset` on the deployed app origin and open a password-change modal in the same recovery session; ensure that origin is present in Supabase Authentication → URL Configuration → Redirect URLs.

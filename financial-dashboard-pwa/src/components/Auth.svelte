@@ -11,6 +11,7 @@
     resetPassword,
     updatePassword,
     passwordRecovery,
+    recoveryError,
     clearPasswordRecovery
   } from '../services/supabaseClient.js';
   import { showToast } from '../stores/ui.js';
@@ -75,8 +76,8 @@
           return;
         }
         await updatePassword(password);
-        showToast('Password updated — sign in with your new password');
-        switchMode('login');
+        showToast('Password updated — you are still signed in');
+        onClose();
       } else {
         await signIn(email, password);
         showToast('Signed in');
@@ -172,7 +173,7 @@
           required
         />
       </label>
-      {#if error}<p class="error">{error}</p>{/if}
+      {#if error || $recoveryError}<p class="error">{error || $recoveryError}</p>{/if}
       {#if message}<p class="hint">{message}</p>{/if}
       <div class="modal-actions">
         <button

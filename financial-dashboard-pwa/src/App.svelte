@@ -130,7 +130,10 @@
     </nav>
   </div>
 
-  {#if showAuth}<Auth onClose={() => (showAuth = false)} />{/if}
   {#if showBackup}<Backup onClose={() => (showBackup = false)} />{/if}
-  <Toast />
 {/if}
+
+<!-- Recovery callbacks must be able to open this modal even while the local
+     database is still loading or has reported a boot error. -->
+{#if showAuth}<Auth onClose={() => (showAuth = false)} />{/if}
+<Toast />
