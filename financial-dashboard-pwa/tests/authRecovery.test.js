@@ -16,7 +16,7 @@ test('recognizes an implicit recovery callback in the URL fragment', () => {
   assert.deepEqual(result, { isRecovery: true, hasAuthParams: true, error: '' });
 });
 
-test('recognizes a PKCE recovery callback and its flow metadata', () => {
+test('recognizes a PKCE recovery callback and its flow metadata for forward compatibility', () => {
   const result = inspectAuthCallback('https://app.example/?code=abc&sb_flow_id=recovery-flow');
   assert.equal(result.isRecovery, true);
   assert.equal(result.hasAuthParams, true);

@@ -47,7 +47,9 @@ export const supabase =
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
-          flowType: 'pkce',
+          // Keep the existing implicit flow so reset links already in users'
+          // inboxes remain valid after this app update.
+          flowType: 'implicit',
           storageKey: 'financial-health-auth'
         },
         global: { headers: { 'x-application-name': 'financial-dashboard-pwa' } }
