@@ -27,8 +27,15 @@ function emit(event, user) {
   }
 }
 
+/**
+ * Bumped on every session write, so a read that was already in flight can tell
+ * that something else changed the session while it was waiting.
+ */
+let sessionGeneration = 0;
+
 function setSession(user) {
   const next = user || null;
+  sessionGeneration += 1;
   session.set(next);
   emit('SESSION_CHANGED', next);
 }
@@ -63,32 +70,47 @@ export async function apiRequest(path, options = {}) {
 
 export function currentUser() { return get(session); }
 
-export async function restoreSession() {
+/**
+ * Read the session from the server without ever overwriting a newer one.
+ *
+ * A session read is a snapshot of the past by the time it returns. Signing in
+ * while one is in flight used to be undone by its answer: the boot-time check has
+ * no cookie, so it comes back 401 and would call `setSession(null)` moments after
+ * sign-in had stored the user. That showed as the header flipping back to "Sign in"
+ * and the protection pill going red straight after creating an account, which
+ * reads as "my account did not save". The same race in reverse resurrected a
+ * session just after signing out.
+ *
+ * So a read only applies its result when nothing else has changed the session
+ * since it started. Writes are unconditional and always win.
+ */
+async function readSession(read) {
+  const generation = sessionGeneration;
+  const stillCurrent = () => generation === sessionGeneration;
   try {
-    const result = await apiRequest('/api/auth/session');
-    setSession(result.user);
+    const result = await read();
+    if (stillCurrent()) setSession(result.user);
+    return result.user || null;
   } catch (error) {
     if (error?.status !== 401) authError.set(friendlyAuthError(error));
-    setSession(null);
+    if (stillCurrent()) setSession(null);
+    return null;
+  }
+}
+
+export async function restoreSession() {
+  try {
+    return await readSession(() => apiRequest('/api/auth/session'));
   } finally {
     authReady.set(true);
   }
-  return get(session);
 }
 
 
 export async function getSessionUser() {
   const cached = get(session);
   if (cached) return cached;
-  try {
-    const result = await apiRequest('/api/auth/session');
-    setSession(result.user);
-    return result.user;
-  } catch (error) {
-    if (error?.status !== 401) authError.set(friendlyAuthError(error));
-    setSession(null);
-    return null;
-  }
+  return readSession(() => apiRequest('/api/auth/session'));
 }
 
 export async function signIn(email, password) { const result = await apiRequest('/api/auth/signin', { method: 'POST', body: { email, password } }); setSession(result.user); return result.user; }
