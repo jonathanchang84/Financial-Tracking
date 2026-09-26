@@ -81,7 +81,18 @@ export async function startLocalWorker({ port = 8788, source = 'the test suite' 
     /** Everything the Worker has written so far, for diagnosing a boot failure. */
     log,
     stop() {
-      devProcess.kill('SIGTERM');
+      // The whole process group, not just the direct child. The process is
+      // spawned detached precisely so this is possible, and it is necessary:
+      // `wrangler dev` execs into workerd, which inherits the stdout/stderr pipes.
+      // Signalling only the direct child leaves workerd holding those pipes open,
+      // so Node's event loop never drains and the test process hangs after every
+      // test has passed. A negative pid signals the group, hence the detached.
+      try { process.kill(-devProcess.pid, 'SIGTERM'); } catch { /* already gone */ }
+      // Escalate if the group ignores SIGTERM, so a hung run cannot leak a
+      // workerd holding the port into the next run.
+      setTimeout(() => {
+        try { process.kill(-devProcess.pid, 'SIGKILL'); } catch { /* already gone */ }
+      }, 2000).unref?.();
       // A leftover .dev.vars would shadow the developer's real secrets.
       try { rmSync(devVarsPath, { force: true }); } catch { /* best effort */ }
     }

@@ -15,7 +15,11 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`. GitHub migrates that label to Ubuntu 26
+    # on 2026-10-19, and a new image can change Chromium's system libraries and
+    # sandboxing, which would break the browser suite with no code change at all.
+    # Revisit deliberately rather than inheriting the migration by surprise.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     defaults:
@@ -61,20 +65,21 @@ jobs:
           # Must match the install step above, or the test process looks for the
           # browser in the default location and cannot find it.
           PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
-      # Artifacts exist so a browser failure can be diagnosed without read access
-      # to the run logs, which are private to the repository owner. The Playwright
-      # HTML report and the worker log are the two things needed to tell a missing
-      # browser from a timing problem from a genuine assertion failure.
-      - name: Upload browser failure report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-failure-report
-          path: |
-            financial-dashboard-pwa/test-results/
-            browser-report/
-          retention-days: 7
-          if-no-files-found: ignore
+      # An artifact upload used to sit here, looking for a Playwright report
+      # directory. This project uses the `playwright` library under `node --test`
+      # with no `playwright.config`, so no report is ever written and the upload
+      # silently produced nothing. Failures are reported as `::error::`
+      # annotations instead, which appear on the run page and need no log access.
+      - name: Record the gate result on the run page
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "## Gate passed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Unit, build, functional (local Worker + D1) and browser smoke tests all passed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Gate failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "See the error annotations on this run for the failing check." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

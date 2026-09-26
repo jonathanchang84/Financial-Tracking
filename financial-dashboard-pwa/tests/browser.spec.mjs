@@ -43,14 +43,28 @@ test.before(async () => {
   }
 });
 
-test.after(async () => {
-  await browser?.close();
-  worker?.stop();
-  // The Worker log is the fastest way to tell a boot failure from an assertion
-  // failure, and `validate` gives it to nobody on a CI failure. Echoed to stdout
-  // so it lands in the step output, which is readable without log access.
-  if (process.env.CI && worker?.log) console.log(`\nworker log (tail):\n${worker.log.slice(-2000)}`);
-});
+/**
+ * Report a failure as a GitHub `::error::` annotation.
+ *
+ * This is the only way to see why the suite failed without read access to the run
+ * log, which is private to the repository owner: annotations appear on the run
+ * page itself, stdout does not. A red step name and nothing else is not a
+ * diagnosable failure.
+ *
+ * Called from where a failure happens rather than from an `after` hook, because
+ * `node:test` hooks receive no context object - verified on Node 22 and 24 - so
+ * a hook cannot see which test failed or why. Keeping this here rather than
+ * inline also means one message format for every check.
+ */
+export function annotateFailure(title, detail) {
+  // One line, and bounded: GitHub truncates long annotation bodies, and a
+  // multi-line error breaks the `::` command format entirely.
+  const body = String(detail || 'no detail recorded')
+    .split('\n')
+    .find((line) => line.trim() && !/^\s*at\s/.test(line)) || 'no detail recorded';
+  console.error(`::error title=${JSON.stringify(title)}::${body.trim().slice(0, 500)}`);
+}
+
 
 /**
  * Expected console noise, filtered out of the assertion.
@@ -102,6 +116,12 @@ test('the app boots and every screen renders without a console error', async () 
       const body = await page.textContent('main.content');
       assert.ok(body && body.trim().length > 0, `${label} rendered no content`);
       assert.deepEqual(errors, [], `${label} logged console errors`);
+    } catch (error) {
+      // Annotated at the point of failure, because this is the test that reports
+      // "logged console errors" and a bare assertion says only that something
+      // was wrong, never which message the page logged.
+      annotateFailure(`Browser smoke: ${label} did not render cleanly`, error?.message || error);
+      throw error;
     } finally {
       await context.close();
     }
@@ -123,6 +143,9 @@ test('the cash flow screen shows the income streams panel and its metrics', asyn
     // implying it is safely stored.
     const pill = await page.textContent('.sync-pill');
     assert.match(pill || '', /This device only|Synced|Offline/);
+  } catch (error) {
+    annotateFailure('Browser smoke: the cash flow screen is missing a metric', error?.message || error);
+    throw error;
   } finally {
     await context.close();
   }

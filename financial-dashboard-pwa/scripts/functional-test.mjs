@@ -380,7 +380,15 @@ async function main() {
   console.log(`\n${failures ? '[31m' : '[32m'}${passed}/${checks.length} checks passed[0m`);
   if (failures) {
     console.log('\nFailed checks:');
-    for (const entry of checks.filter((item) => !item.ok)) console.log(`  - ${entry.name}`);
+    for (const entry of checks.filter((item) => !item.ok)) {
+      console.log(`  - ${entry.name}`);
+      // Re-announced as a GitHub annotation, which is shown on the run page.
+      // The list above only reaches the run log, which needs authentication, so
+      // a red CI run was otherwise a step name with no explanation attached. The
+      // detail is included because a check name rarely says what actually failed.
+      const detail = [entry.detail, entry.status].filter(Boolean).join(' ').slice(0, 500);
+      console.error(`::error title=${JSON.stringify(`Functional check failed: ${entry.name}`)}::${detail || 'no detail recorded'}`);
+    }
   }
   process.exit(failures ? 1 : 0);
 }

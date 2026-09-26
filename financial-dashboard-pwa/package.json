@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "node --test tests/*.test.js",
     "test:functional": "node scripts/functional-test.mjs",
-    "test:browser": "node --test --test-timeout=180000 tests/browser.spec.mjs",
+    "test:browser": "node --test --test-force-exit --test-timeout=180000 tests/browser.spec.mjs",
     "setup": "playwright install chromium",
     "validate": "npm run test && npm run build && npm run test:functional && npm run test:browser",
     "deploy": "npm run validate && wrangler deploy",
