@@ -1,134 +1,128 @@
 <script>
-  /** Supabase Auth gateway: email + password sign in / sign up, forgot/reset password, or sign out. */
+  /**
+   * Application-owned authentication: sign in, sign up, and password recovery.
+   *
+   * Every flow completes in-session. There is no email delivery anywhere, so
+   * nothing waits on an inbox: signing up creates a usable account immediately,
+   * and recovery proves identity with a secret answer the user already saved.
+   */
   import Modal from './Modal.svelte';
+  import AccountSettings from './AccountSettings.svelte';
   import {
     cloudEnabled,
     session,
     signIn,
     signUp,
-    signOut,
-    resendConfirmation,
-    resetPassword,
-    updatePassword,
-    passwordRecovery,
-    recoveryError,
-    clearPasswordRecovery
-  } from '../services/supabaseClient.js';
+    recoveryQuestions,
+    recover,
+    resetPassword
+  } from '../services/appClient.js';
+  import { hashRecoveryAnswer } from '../services/accountSecretCrypto.js';
   import { showToast } from '../stores/ui.js';
 
   let { onClose = () => {} } = $props();
 
-        let mode = $state('login');
+  /** 'login' | 'signup' | 'recover' (choose question) | 'reset' (choose password) */
+  let mode = $state('login');
   let email = $state('');
   let password = $state('');
   let confirmPassword = $state('');
+  let secretAnswer = $state('');
+  let questions = $state([]);
+  /** The question object the user selected, or null before they choose one. */
+  let chosen = $state(null);
+  let recoveryToken = $state('');
   let busy = $state(false);
   let message = $state('');
   let error = $state('');
-  let needsConfirmation = $state(false);
-
-  // Arriving from a password-recovery email link → open straight into
-  // the "set new password" form (even though a temporary session exists).
-  if ($passwordRecovery) mode = 'reset';
 
   const user = $derived($session);
-
-  $effect(() => {
-    if ($passwordRecovery) mode = 'reset';
-  });
 
   function switchMode(next) {
     mode = next;
     error = '';
     message = '';
-    needsConfirmation = false;
+    if (next !== 'recover') {
+      questions = [];
+      chosen = null;
+      secretAnswer = '';
+    }
+    if (next !== 'reset') recoveryToken = '';
   }
 
   async function submit(event) {
     event.preventDefault();
     if (!cloudEnabled) {
-      error = 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
+      error = 'The application API is not configured. Set VITE_API_URL or deploy the Cloudflare Worker.';
       return;
     }
-    busy = true;
     error = '';
     message = '';
-        try {
+    busy = true;
+    try {
       if (mode === 'signup') {
-        const result = await signUp(email, password);
-        if (result.needsConfirmation) {
-          needsConfirmation = true;
-          message =
-            'Account created — confirmation email required. Confirm the link, then sign in (or tap resend below).';
-        } else {
-          needsConfirmation = false;
-          showToast('Account created and signed in');
-          onClose();
-        }
-      } else if (mode === 'forgot') {
-        await resetPassword(email);
-        message = 'If an account exists for that email, a reset link is on its way — check your inbox (and spam).';
-        showToast('Password reset email sent');
-      } else if (mode === 'reset') {
-        if (password !== confirmPassword) {
-          error = 'Passwords do not match.';
-          busy = false;
-          return;
-        }
-        await updatePassword(password);
-        showToast('Password updated — you are still signed in');
+        await signUp(email, password);
+        showToast('Account created and signed in');
         onClose();
-      } else {
+        return;
+      }
+
+      if (mode === 'login') {
         await signIn(email, password);
         showToast('Signed in');
         onClose();
+        return;
+      }
+
+      if (mode === 'recover') {
+        if (!chosen) {
+          error = 'Choose which secret answer you want to use.';
+          return;
+        }
+        // Only the derived digest is sent; the answer itself never leaves the browser.
+        const digest = await hashRecoveryAnswer(secretAnswer, { salt: chosen.salt, iterations: 310000 });
+        recoveryToken = await recover(email, chosen.id, digest.answer_hash);
+        password = '';
+        confirmPassword = '';
+        secretAnswer = '';
+        mode = 'reset';
+        message = 'That answer was accepted. Choose a new password.';
+        return;
+      }
+
+      if (mode === 'reset') {
+        if (password !== confirmPassword) {
+          error = 'Passwords do not match.';
+          return;
+        }
+        await resetPassword(recoveryToken, password);
+        password = '';
+        recoveryToken = '';
+        showToast('Password updated — sign in with your new password');
+        mode = 'login';
+        message = 'Password updated. Sign in with your new password.';
       }
     } catch (caught) {
       error = typeof caught === 'string' ? caught : caught.message;
-      needsConfirmation = false;
     } finally {
       busy = false;
     }
   }
 
-  /** Re-send the confirmation email, only relevant when Supabase email confirmation is on. */
-  async function resend() {
-    busy = true;
+  /** Load the secret questions this address may recover with. */
+  async function loadQuestions() {
+    if (!email) {
+      error = 'Enter the email address on the account first.';
+      return;
+    }
     error = '';
     message = '';
-    try {
-      await resendConfirmation(email);
-      message = 'Confirmation email sent again — check your inbox (and spam).';
-      showToast('Confirmation email re-sent');
-    } catch (caught) {
-      error = typeof caught === 'string' ? caught : caught.message;
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function doSignOut() {
     busy = true;
     try {
-      await signOut();
-      showToast('Signed out');
-      onClose();
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function sendPasswordReset() {
-    if (!user?.email) return;
-    busy = true;
-    error = '';
-    message = '';
-    try {
-      await resetPassword(user.email);
-      message = `Password reset instructions sent to ${user.email}. Check your inbox and spam folder.`;
-      showToast('Password reset email sent');
+      questions = await recoveryQuestions(email);
+      if (!questions.length) error = 'No recovery questions are available for that address.';
     } catch (caught) {
-      error = typeof caught === 'string' ? caught : caught.message;
+      error = caught.message;
     } finally {
       busy = false;
     }
@@ -136,121 +130,122 @@
 </script>
 
 <Modal
-  title={mode === 'reset'
-    ? 'Set new password'
-    : mode === 'forgot'
-      ? 'Reset your password'
-      : user
-        ? 'Your account'
-        : mode === 'login'
-          ? 'Sign in'
-          : 'Create account'}
-  eyebrow="CLOUD ACCOUNT"
-  subtitle="Sync is optional — the app stays fully functional offline without an account."
+  title={user
+    ? 'Your profile'
+    : mode === 'login'
+      ? 'Sign in'
+      : mode === 'signup'
+        ? 'Create account'
+        : mode === 'recover'
+          ? 'Recover your account'
+          : 'Set a new password'}
+  eyebrow={user ? 'CLOUD PROFILE' : 'CLOUD ACCOUNT'}
+  subtitle={user
+    ? 'Manage your profile, sign-in details, and secret answers.'
+    : 'Sync is optional — the app stays fully functional offline without an account.'}
   {onClose}
 >
   {#if !cloudEnabled}
-    <p class="error">Supabase keys are missing from this build, so cloud sync stays off.</p>
-    <p class="hint">Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file and rebuild.</p>
+    <p class="error">The application API is not configured, so accounts and cloud sync are unavailable.</p>
+    <p class="hint">Set VITE_API_URL for a separate API origin, or deploy the Cloudflare Worker alongside this site.</p>
+  {:else if user}
+    <AccountSettings {user} {onClose} />
   {:else if mode === 'reset'}
-    <p class="hint">Choose a new password for <strong>{user?.email ?? email}</strong>.</p>
+    <p class="hint">Choose a new password for <strong>{email}</strong>. This signs out every other session.</p>
     <form onsubmit={submit}>
       <label>New password
-        <input
-          type="password"
-          bind:value={password}
-          minlength="6"
-          autocomplete="new-password"
-          required
-        />
+        <input type="password" bind:value={password} minlength="8" autocomplete="new-password" required />
       </label>
       <label>Confirm new password
-        <input
-          type="password"
-          bind:value={confirmPassword}
-          minlength="6"
-          autocomplete="new-password"
-          required
-        />
+        <input type="password" bind:value={confirmPassword} minlength="8" autocomplete="new-password" required />
       </label>
-      {#if error || $recoveryError}<p class="error">{error || $recoveryError}</p>{/if}
-      {#if message}<p class="hint">{message}</p>{/if}
+      {#if error}<p class="error">{error}</p>{/if}
+      {#if message}<p class="hint positive">{message}</p>{/if}
       <div class="modal-actions">
-        <button
-          class="secondary-button"
-          type="button"
-          onclick={() => {
-            clearPasswordRecovery();
-            switchMode('login');
-          }}
-        >
-          Back to sign in
-        </button>
+        <button class="secondary-button" type="button" onclick={() => switchMode('login')}>Back to sign in</button>
         <button class="primary-button" type="submit" disabled={busy}>
           {busy ? 'Saving…' : 'Save new password'}
         </button>
       </div>
     </form>
-  {:else if user}
-    <p class="hint">Signed in as <strong>{user.email}</strong></p>
-    <p class="hint">Rows are stored with owner_id = {user.id.slice(0, 8)}… and protected by row level security.</p>
-    {#if error}<p class="error">{error}</p>{/if}
-    {#if message}<p class="hint">{message}</p>{/if}
+  {:else if mode === 'recover'}
+    <p class="hint">
+      Recovery uses a secret answer you saved, so it works without email. If you never added one, this
+      cannot recover the account — add at least one from Profile.
+    </p>
+    <label>Email
+      <input type="email" bind:value={email} autocomplete="email" required />
+    </label>
     <div class="modal-actions">
-      <button class="secondary-button" type="button" onclick={onClose}>Close</button>
-      <button class="secondary-button" type="button" disabled={busy} onclick={sendPasswordReset}>Reset password</button>
-      <button class="danger-button" type="button" disabled={busy} onclick={doSignOut}>Sign out</button>
+      <button class="secondary-button" type="button" disabled={busy} onclick={loadQuestions}>
+        {busy ? 'Checking…' : 'Find my secret questions'}
+      </button>
     </div>
+
+    {#if questions.length}
+      <div class="panel" style="margin-top:12px">
+        {#each questions as item (item.salt)}
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="question"
+              checked={chosen?.salt === item.salt}
+              onchange={() => (chosen = item)}
+            />
+            <span>{item.question}</span>
+          </label>
+        {/each}
+      </div>
+    {/if}
+
+    {#if chosen}
+      <form onsubmit={submit}>
+        <label>Answer to “{chosen.question}”
+          <input type="password" bind:value={secretAnswer} autocomplete="off" required />
+        </label>
+        {#if error}<p class="error">{error}</p>{/if}
+        {#if message}<p class="hint positive">{message}</p>{/if}
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" onclick={() => switchMode('login')}>Back to sign in</button>
+          <button class="primary-button" type="submit" disabled={busy}>
+            {busy ? 'Checking…' : 'Verify and continue'}
+          </button>
+        </div>
+      </form>
+    {:else if !error}
+      {#if message}<p class="hint positive">{message}</p>{/if}
+    {/if}
   {:else}
     <form onsubmit={submit}>
       <label>Email
         <input type="email" bind:value={email} autocomplete="email" required />
       </label>
-      {#if mode !== 'forgot'}
       <label>Password
         <input
           type="password"
           bind:value={password}
-          minlength="6"
+          minlength="8"
           autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
           required
         />
       </label>
-      {/if}
-        {#if error}<p class="error">{error}</p>{/if}
-        {#if message}<p class="hint">{message}</p>{/if}
-        {#if mode === 'signup' && needsConfirmation && email}
-          <div class="modal-actions">
-            <button class="secondary-button" type="button" disabled={busy} onclick={resend}>
-              Resend confirmation email
-            </button>
-          </div>
-        {/if}
+      {#if error}<p class="error">{error}</p>{/if}
+      {#if message}<p class="hint positive">{message}</p>{/if}
       <div class="modal-actions">
         {#if mode === 'login'}
           <button class="secondary-button" type="button" onclick={() => switchMode('signup')}>
             Need an account? Sign up
           </button>
-          <button
-            class="secondary-button"
-            type="button"
-            style="opacity:.75"
-            onclick={() => switchMode('forgot')}
-          >
+          <button class="secondary-button" type="button" style="opacity:.75" onclick={() => switchMode('recover')}>
             Forgot password?
           </button>
-        {:else if mode === 'signup'}
+        {:else}
           <button class="secondary-button" type="button" onclick={() => switchMode('login')}>
             Have an account? Sign in
           </button>
-        {:else}
-          <!-- forgot mode -->
-          <button class="secondary-button" type="button" onclick={() => switchMode('login')}>
-            Back to sign in
-          </button>
         {/if}
         <button class="primary-button" type="submit" disabled={busy}>
-          {mode === 'login' ? 'Sign in' : mode === 'forgot' ? 'Send reset link' : 'Sign up'}
+          {busy ? 'Working…' : mode === 'login' ? 'Sign in' : 'Sign up'}
         </button>
       </div>
     </form>

@@ -1,0 +1,16 @@
+#!/bin/sh
+#
+# Pre-commit gate: the fast suite only (~2s).
+#
+# Deliberately not `npm run validate`. That is ~90s because it boots a Worker and
+# a browser, and a hook that slow gets routed around with --no-verify. The full
+# gate runs in CI before a deploy, where it cannot be skipped, so this hook only
+# needs to stop the cheap mistake: committing code whose unit tests fail.
+set -e
+
+cd "$(git rev-parse --show-toplevel)/financial-dashboard-pwa"
+if [ "${SKIP_HOOKS:-}" = "1" ]; then
+  echo "pre-commit: skipped (SKIP_HOOKS=1)"
+  exit 0
+fi
+npm test --silent

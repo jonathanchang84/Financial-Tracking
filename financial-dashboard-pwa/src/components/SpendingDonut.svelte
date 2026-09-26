@@ -51,15 +51,15 @@
 </div>
 
 <style>
-  .spending-breakdown { display: grid; grid-template-columns: minmax(150px, 190px) 1fr; gap: 18px; align-items: center; }
+  .spending-breakdown { display: grid; grid-template-columns: minmax(min(150px, 100%), 190px) minmax(0, 1fr); gap: 18px; align-items: center; }
   .spending-donut { width: 170px; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; }
   .donut-hole { width: 106px; aspect-ratio: 1; border-radius: 50%; background: var(--panel); display: grid; place-content: center; text-align: center; }
   .donut-hole strong { font-size: 1.05rem; }
   .donut-hole small { color: var(--muted); }
   .spending-legend { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
-  .spending-legend li { display: grid; grid-template-columns: 12px 1fr auto; gap: 7px; align-items: center; font-size: 0.82rem; }
+  .spending-legend li { display: grid; grid-template-columns: 12px minmax(0, 1fr) minmax(0, auto); gap: 7px; align-items: center; font-size: 0.82rem; }
   .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
   .legend-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .legend-value { color: var(--muted); text-align: right; white-space: nowrap; }
+  .legend-value { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); text-align: right; white-space: nowrap; }
   @media (max-width: 560px) { .spending-breakdown { grid-template-columns: 1fr; justify-items: center; } .spending-legend { width: 100%; } }
 </style>

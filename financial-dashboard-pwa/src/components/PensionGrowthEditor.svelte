@@ -91,7 +91,7 @@
 
 <style>
   .growth-form { display: grid; gap: 12px; }
-  .growth-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .growth-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; }
   .growth-row { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--panel-alt); }
   .growth-row .hint { margin-top: 6px; }
 </style>

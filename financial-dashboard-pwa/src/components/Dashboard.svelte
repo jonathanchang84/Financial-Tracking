@@ -16,14 +16,17 @@
     convertCurrency
   } from '../stores/finance.js';
   import { runwayPlanner, growthPercent, num } from '../services/runway.js';
-  import { longLabel } from '../services/dates.js';
+  import { normaliseIncomeStreams, resolveMainPayday } from '../services/income.js';
   import CurrencySelect from './CurrencySelect.svelte';
   import DailyRunwayTable from './DailyRunwayTable.svelte';
 
   let { onOpenCashflow = () => {}, onOpenPosition = () => {}, onOpenBudgets = () => {} } = $props();
 
   const balanceCurrency = $derived($settings.balanceCurrency || 'USD');
-  const payday = $derived($settings.payday || '');
+  const incomeStreams = $derived(normaliseIncomeStreams($settings.incomeStreams));
+  const mainPayday = $derived(resolveMainPayday(incomeStreams, new Date()));
+  // One resolved date, so the planner and every existing figure are unchanged.
+  const payday = $derived(mainPayday?.key || $settings.payday || '');
   const plan = $derived(
     runwayPlanner({
       balance: $settings.balance,
@@ -66,7 +69,9 @@
         <p class="eyebrow">TODAY</p>
         <h2>Your financial picture</h2>
         <p class="muted">
-          Payday {payday ? longLabel(payday) : 'not set'} · {plan.daysUntilPayday || 0} day(s) until payday · figures in
+          {mainPayday
+            ? `Main payday ${mainPayday.stream.name} · ${mainPayday.weekday} ${mainPayday.label}`
+            : 'Payday not set'} · {plan.daysUntilPayday || 0} day(s) until payday · figures in
           {$displayCurrency}
         </p>
       </div>
@@ -93,7 +98,11 @@
     <article class="fh-metric">
       <p class="eyebrow">DAYS UNTIL NEXT PAYDAY</p>
       <strong>{plan.daysUntilPayday || 0}</strong>
-      <p class="hint">Calendar days from today to the next logged payday</p>
+      <p class="hint">
+        {mainPayday
+          ? `Calendar days from today to ${mainPayday.stream.name} on ${mainPayday.label}`
+          : 'Set a main income stream on Cash flow'}
+      </p>
     </article>
     <article class="fh-metric">
       <p class="eyebrow">BALANCE AT PAYDAY</p>
@@ -130,7 +139,7 @@
     />
   </section>
 
-  <div class="fh-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+  <div class="fh-grid dashboard-summary-grid">
     <section class="panel">
       <div class="section-heading">
         <div><p class="eyebrow">POSITION</p><h3>Net worth by currency</h3></div>

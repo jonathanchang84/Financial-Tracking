@@ -1,15 +1,37 @@
-# Cloudflare deployment configuration — static PWA only (free tier).
-# - Cloudflare Workers Static Assets (`*.workers.dev`):
-#   `wrangler deploy` serves ONLY `./dist`.
-#   Never point the asset directory at the project root, or the dev
-#   `/src/main.js` shell ships instead of the hashed `/assets/*` bundle.
+# Cloudflare Workers configuration: static PWA + application-owned API.
 name = "financial-tracking"
+main = "worker/index.js"
 compatibility_date = "2025-01-01"
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
+# Let the Worker handle the API while the asset server handles the SPA.
+run_worker_first = ["/api/*"]
 
-# Free-tier friendly: pure static assets, no Functions, no cron, no Durable Objects.
-# Build command: npm run build
-# Build output directory: dist
+[vars]
+APP_URL = "https://financial-tracking.jonathanchang84.workers.dev"
+AUTH_APP_NAME = "Financial Dashboard"
+# Comma separated client IPs that skip auth rate limiting, so a flaky connection
+# on the owner's own line cannot lock them out of their own app. Edit and
+# redeploy when the address changes; no code change is needed. Each address is
+# matched against the Cloudflare-supplied CF-Connecting-IP, so an entry is inert
+# unless the request actually arrives through the Cloudflare edge. IPv6 is
+# compared by value, so hex case and `::` compression do not matter.
+RATE_LIMIT_ALLOWLIST = "86.180.178.35, 2a00:23c8:9194:3e01:e1e7:229d:30a5:8afc"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "financial-tracking"
+database_id = "54d53dd3-7c3d-431e-8352-a4681a41b165"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "AUTH_RATE_LIMITER"
+class_name = "AuthRateLimiter"
+
+[[migrations]]
+tag = "v1"
+# Free-plan Durable Objects must use the SQLite backend.
+new_sqlite_classes = ["AuthRateLimiter"]

@@ -1,0 +1,8 @@
+# Copy to `.dev.vars` (git-ignored) before running `npx wrangler dev`.
+# These are Worker-only secrets. Never put them in `.env` or in the PWA build.
+#
+# The app sends no email at all, so this is the only secret it needs.
+#
+# Generate AUTH_PEPPER with a password manager or:
+#   openssl rand -base64 48
+AUTH_PEPPER=replace-with-at-least-32-random-characters

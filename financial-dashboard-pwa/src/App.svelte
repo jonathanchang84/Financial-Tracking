@@ -13,9 +13,11 @@
   import Backup from './components/Backup.svelte';
   import Auth from './components/Auth.svelte';
   import CurrencySelect from './components/CurrencySelect.svelte';
+  import ProtectionBanner from './components/ProtectionBanner.svelte';
   import { initStores } from './stores/finance.js';
-  import { initSyncEngine, teardownSyncEngine, syncStatus, syncDetail, pendingCount } from './services/syncEngine.js';
-  import { session, passwordRecovery } from './services/supabaseClient.js';
+  import { initSyncEngine, teardownSyncEngine, pendingCount } from './services/syncEngine.js';
+  import { protectionCopy, protectionState, readDismissedAt, rememberDismissedAt, shouldShowProtectionBanner } from './services/dataSafety.js';
+  import { session } from './services/appClient.js';
   import { theme, toggleTheme, watchConnectivity, online } from './stores/ui.js';
 
   const VIEWS = [
@@ -32,6 +34,28 @@
   let bootError = $state('');
   let showAuth = $state(false);
   let showBackup = $state(false);
+
+  // The old pill read "Saved locally" in the same grey as a healthy state, which
+  // is misleading: local-only means this browser profile holds the only copy.
+  const protection = $derived(protectionState({
+    online: $online,
+    signedIn: Boolean($session),
+    pending: $pendingCount
+  }));
+  const protectionText = $derived(protectionCopy(protection));
+
+  // Nudge once there is something to lose, and remember the dismissal along with
+  // the record count at the time so it reappears only if there is much more at
+  // stake rather than nagging on every visit.
+  let dismissedAt = $state(readDismissedAt());
+  const showProtectionBanner = $derived(
+    shouldShowProtectionBanner({ state: protection, pending: $pendingCount, dismissedAt })
+  );
+
+  function dismissProtectionBanner() {
+    dismissedAt = Number($pendingCount) || 0;
+    rememberDismissedAt(dismissedAt);
+  }
 
   onMount(() => {
     const stopConnectivity = watchConnectivity();
@@ -63,12 +87,6 @@
   }
 
   const signedIn = $derived(Boolean($session));
-
-  // Arriving from a password-recovery email link → open the Auth modal
-  // straight into its "set new password" form.
-  $effect(() => {
-    if ($passwordRecovery) showAuth = true;
-  });
 </script>
 
 {#if bootError}
@@ -92,20 +110,37 @@
         <h1>Financial Dashboard</h1>
       </div>
       <div class="header-actions">
-        <span class="sync-pill" title={$syncDetail}>{$syncStatus}{$pendingCount ? ` · ${$pendingCount}` : ''}</span>
-        {#if !$online}<span class="sync-pill">Offline</span>{/if}
+        <span
+          class="sync-pill"
+          class:alert={protectionText.tone === 'alert'}
+          class:warn={protectionText.tone === 'warn'}
+          title={protectionText.detail}
+          aria-live="polite"
+        >{protectionText.label}{$pendingCount && protection === 'stalled' ? ` · ${$pendingCount}` : ''}</span>
         <CurrencySelect compact />
         <button class="icon-button" type="button" title="Toggle colour theme" onclick={toggleTheme}>
           {$theme === 'dark' ? '☾' : '☼'}
         </button>
-        <button class="secondary-button" type="button" onclick={() => (showAuth = true)}>
-          {signedIn ? 'Account ✓' : 'Sign in'}
+        <button
+          class="secondary-button"
+          type="button"
+          title={signedIn ? 'Open your profile' : 'Sign in'}
+          onclick={() => (showAuth = true)}
+        >
+          {signedIn ? 'Profile' : 'Sign in'}
         </button>
         <button class="secondary-button" type="button" onclick={() => (showBackup = true)}>Backup</button>
       </div>
     </header>
 
     <main class="content">
+      {#if showProtectionBanner}
+        <ProtectionBanner
+          pending={$pendingCount}
+          onSignIn={() => (showAuth = true)}
+          onDismiss={dismissProtectionBanner}
+        />
+      {/if}
       {#if view === 'dashboard'}
         <Dashboard
           onOpenCashflow={() => go('cashflow')}

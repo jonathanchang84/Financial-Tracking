@@ -76,11 +76,11 @@
 
 <style>
   .current-month-panel { display: grid; gap: 14px; }
-  .current-month-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(190px, 0.7fr); gap: 18px; align-items: start; }
+  .current-month-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(min(190px, 100%), 0.7fr); gap: 18px; align-items: start; }
   .current-month-summary { display: grid; gap: 10px; }
-  .current-month-summary > div { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
-  .current-month-summary span { color: var(--muted); font-size: 0.82rem; }
-  .current-month-summary strong { white-space: nowrap; }
+  .current-month-summary > div { display: flex; justify-content: space-between; gap: 12px; min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .current-month-summary span { color: var(--muted); font-size: 0.82rem; min-width: 0; }
+  .current-month-summary strong { min-width: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; }
   .text-button.active { color: var(--positive); }
   @media (max-width: 680px) { .current-month-layout { grid-template-columns: 1fr; } }
 </style>

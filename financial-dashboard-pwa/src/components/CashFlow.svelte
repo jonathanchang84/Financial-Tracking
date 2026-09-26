@@ -1,7 +1,8 @@
 <script>
   /**
-   * Cash flow planner — the historic form controls plus the daily runway grid.
-   * Balance, balance currency and payday are settings; bills and Spend Items are records.
+   * Cash flow planner — the runway grid, obligations, and the settings that drive
+   * them. The balance form, the income-stream editor and the headline figures each
+   * live in their own component; this file keeps the wiring and the plan itself.
    */
   import {
     settings,
@@ -11,17 +12,28 @@
     commitments,
     displayCurrency,
     money,
-    convertCurrency,
-    RATES,
-    CURRENCY_NAMES
+    convertCurrency
   } from '../stores/finance.js';
-  import { runwayPlanner, num, currencyOf, parseNonNegativeNumber } from '../services/runway.js';
+  import { runwayPlanner, num, currencyOf } from '../services/runway.js';
+  import {
+    MAX_INCOME_STREAMS,
+    createStream,
+    normaliseIncomeStreams,
+    removeStream,
+    resolveMainPayday,
+    upcomingPaydays,
+    upsertStream,
+    withMainStream
+  } from '../services/income.js';
   import { currentMonthExpenses } from '../services/financeCalculations.js';
   import { expensePaymentKey, isExpensePaid } from '../services/paymentState.js';
-  import { dayKey, longLabel, isValidDate, startOfDay } from '../services/dates.js';
+  import { dayKey, longLabel } from '../services/dates.js';
   import { confirmDelete } from '../services/commands.js';
   import { showToast, errorToast } from '../stores/ui.js';
   import CurrencySelect from './CurrencySelect.svelte';
+  import IncomeStreamsPanel from './IncomeStreamsPanel.svelte';
+  import RunwayMetrics from './RunwayMetrics.svelte';
+  import CashSettingsPanel from './CashSettingsPanel.svelte';
   import DailyRunwayTable from './DailyRunwayTable.svelte';
   import RunwayVisual from './RunwayVisual.svelte';
   import RecordList from './RecordList.svelte';
@@ -29,30 +41,23 @@
   import CommitmentModal from './CommitmentModal.svelte';
   import CurrentMonthExpenses from './CurrentMonthExpenses.svelte';
 
-  const codes = Object.keys(RATES);
-
-  let form = $state({ balance: '0', currency: 'USD', payday: '' });
   let editingBill = $state(null);
   let editingCommitment = $state(null);
   let showBill = $state(false);
   let showCommitment = $state(false);
-  let savingCashSettings = $state(false);
-
-  let syncedKey = '';
-  // Re-fill the form whenever the stored settings change (boot, restore, save).
-  $effect(() => {
-    const key = `${$settings.balance}|${$settings.balanceCurrency}|${$settings.payday}`;
-    if (key === syncedKey) return;
-    syncedKey = key;
-    form = {
-      balance: $settings.balance != null ? String($settings.balance) : '',
-      currency: $settings.balanceCurrency || 'USD',
-      payday: $settings.payday || ''
-    };
-  });
 
   const balanceCurrency = $derived($settings.balanceCurrency || 'USD');
   const paidExpenses = $derived($settings.paidExpenses || {});
+
+  const incomeStreams = $derived(normaliseIncomeStreams($settings.incomeStreams));
+  const mainPayday = $derived(resolveMainPayday(incomeStreams, new Date()));
+  const otherPaydays = $derived(
+    upcomingPaydays(incomeStreams.filter((stream) => !mainPayday || stream.id !== mainPayday.stream.id), new Date())
+  );
+  // The runway still takes one resolved date, so every existing figure and test is
+  // unchanged. The legacy scalar stays as a fallback for pre-migration backups.
+  const runwayPayday = $derived(mainPayday?.key || $settings.payday || '');
+
   const currentMonthKey = dayKey(new Date()).slice(0, 7);
   const currentMonthData = $derived(
     currentMonthExpenses({
@@ -69,7 +74,7 @@
     runwayPlanner({
       balance: $settings.balance,
       currency: balanceCurrency,
-      payday: $settings.payday || '',
+      payday: runwayPayday,
       bills: $bills,
       commitments: $commitments,
       paidExpenses
@@ -123,46 +128,50 @@
       })
   );
 
-  // Persist the balance when the field is committed. Invalid drafts are left
-  // visible for correction and never replace the last valid stored balance.
-  async function saveBalanceNow() {
-    const balance = parseNonNegativeNumber(form.balance);
-    if (balance === null) {
-      errorToast('Enter a valid available balance');
-      return;
-    }
+  // Persist the balance. Invalid drafts are rejected by CashSettingsPanel before
+  // this is reached, and the last valid stored balance is left untouched.
+  async function saveCashSettings(next) {
+    await saveSettings(next);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Income streams                                                      */
+  /* ------------------------------------------------------------------ */
+
+  async function persistStreams(next) {
     try {
-      await saveSettings({ balance, balanceCurrency: form.currency });
-      showToast('Balance saved');
+      await saveSetting('incomeStreams', next);
     } catch (error) {
-      errorToast('Could not save balance: ' + error.message);
+      errorToast(`Could not save income streams: ${error.message}`);
     }
   }
 
-  async function saveCashSettings(event) {
-    event.preventDefault();
-    const balance = parseNonNegativeNumber(form.balance);
-    if (balance === null) {
-      errorToast('Enter a valid available balance');
+  async function addStream() {
+    if (incomeStreams.length >= MAX_INCOME_STREAMS) {
+      errorToast(`You can track up to ${MAX_INCOME_STREAMS} income streams`);
       return;
     }
-    if (form.payday && (!isValidDate(form.payday) || startOfDay(form.payday) < startOfDay(new Date()))) {
-      errorToast('Choose today or a future payday');
-      return;
-    }
-    savingCashSettings = true;
-    try {
-      await saveSettings({
-        balance,
-        balanceCurrency: form.currency,
-        payday: form.payday ? dayKey(form.payday) : ''
-      });
-      showToast(form.payday ? 'Runway settings saved' : 'Balance saved — set a payday to see the runway');
-    } catch (error) {
-      errorToast(`Could not save settings: ${error.message}`);
-    } finally {
-      savingCashSettings = false;
-    }
+    await persistStreams(createStream(incomeStreams));
+    showToast('Income stream added');
+  }
+
+  async function updateStream(id, changes) {
+    await persistStreams(upsertStream(incomeStreams, { id, ...changes }));
+  }
+
+  async function makeMain(id) {
+    await persistStreams(withMainStream(incomeStreams, id));
+    const stream = incomeStreams.find((item) => item.id === id);
+    showToast(`${stream?.name || 'Stream'} is now the main payday`);
+  }
+
+  async function deleteStream(id) {
+    const stream = incomeStreams.find((item) => item.id === id);
+    const remaining = removeStream(incomeStreams, id);
+    await persistStreams(remaining);
+    showToast(remaining.some((item) => item.isMain)
+      ? `Removed ${stream?.name || 'stream'}. ${remaining.find((item) => item.isMain)?.name} is now the main payday.`
+      : `Removed ${stream?.name || 'stream'}`);
   }
 
   async function togglePaid(row) {
@@ -204,55 +213,28 @@
       <p class="eyebrow">CASH FLOW</p>
       <h2>Runway planner</h2>
       <p class="muted">
-        Save the balance, balance currency and payday, then add bills and Spend Items. Everything is stored on
-        this device first.
+        Save the balance and balance currency, list each income stream, then add bills and Spend Items. Everything
+        is stored on this device first and committed to your account automatically.
       </p>
     </div>
     <CurrencySelect id="cashflow-currency" compact label="Default currency" />
   </div>
 
   <section class="panel">
-    <form class="fh-form" onsubmit={saveCashSettings}>
-      <label>Available balance
-        <input type="number" min="0" step="0.01" bind:value={form.balance} required onchange={saveBalanceNow} />
-      </label>
-      <label>Balance currency
-        <select bind:value={form.currency} onchange={saveBalanceNow}>
-          {#each codes as code}<option value={code}>{code} · {CURRENCY_NAMES[code] ?? code}</option>{/each}
-        </select>
-      </label>
-      <label>Next payday
-        <input type="date" bind:value={form.payday} />
-      </label>
-      <button class="primary-button" type="submit" disabled={savingCashSettings}>Save balance and payday</button>
-    </form>
+    <CashSettingsPanel balance={$settings.balance} currency={balanceCurrency} onSave={saveCashSettings} />
 
-    <div class="fh-metrics" style="margin-top:14px">
-      <article class="fh-metric">
-        <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
-        <strong>{inDisplay(plan.safeToday)}</strong>
-        <p class="hint">After reserving {inDisplay(plan.obligationTotal)}; hypothetical and spread before payday</p>
-      </article>
-      <article class="fh-metric">
-        <p class="eyebrow">DAYS UNTIL PAYDAY</p>
-        <strong>{plan.daysUntilPayday || 0}</strong>
-        <p class="hint">
-          {plan.paydayPast ? 'Payday has passed — choose a future date' : plan.payday ? `Payday ${longLabel(plan.payday)} · ${plan.dayCount || 0} inclusive grid day(s)` : 'Set your next payday'}
-          {#if plan.truncated}<br />Grid shows the first {plan.renderedDays} days{/if}
-        </p>
-      </article>
-      <article class="fh-metric">
-        <p class="eyebrow">CASH AFTER BILLS & SPEND ITEMS</p>
-        <strong class:negative={plan.cashAfterPlannedSpend < 0}>{inDisplay(plan.cashAfterPlannedSpend)}</strong>
-        <p class="hint">{plan.shortfall > 0 ? `${inDisplay(plan.shortfall)} short of obligations` : 'Available for the cycle after obligations'}</p>
-      </article>
-      <article class="fh-metric">
-        <p class="eyebrow">BALANCE AT PAYDAY</p>
-        <strong class:negative={plan.projectedAtPayday < 0}>{inDisplay(plan.projectedAtPayday)}</strong>
-        <p class="hint">After bills and Spend Items only; Safe to Spend is hypothetical</p>
-      </article>
-    </div>
+    <RunwayMetrics {plan} {mainPayday} {inDisplay} />
   </section>
+
+  <IncomeStreamsPanel
+    streams={incomeStreams}
+    {mainPayday}
+    {otherPaydays}
+    onAdd={addStream}
+    onUpdate={updateStream}
+    onMakeMain={makeMain}
+    onDelete={deleteStream}
+  />
 
   <section class="panel">
     <div class="section-heading">

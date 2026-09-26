@@ -1,29 +1,13 @@
-/**
- * Non-blocking Sync Engine.
- *
- * Guarantees:
- *  1. Every write commits to IndexedDB first — the UI never waits on a network
- *     round trip, and `navigator.onLine === false` is a normal state.
- *  2. When online *and* signed in, the row is upserted to Supabase in the
- *     background with `owner_id = auth.uid()`.
- *  3. Offline writes keep `pending_sync: true` and are flushed automatically on
- *     `online`, on sign-in, and on a slow interval.
- *  4. Remote rows are pulled back (last-write-wins by `updated_at`) without ever
- *     clobbering a local row that still has unpushed changes.
- *
- * Mutable assets keep SCD Type 2 columns (`valid_from`, `valid_to`,
- * `current_flag`, `logical_id`) so historical valuations are append-only.
- */
-
+/** Offline-first sync through the application Worker. IndexedDB remains the
+ * local source of truth; the Worker stores owner-scoped JSON rows in D1. */
 import { writable, get } from 'svelte/store';
 import {
-  supabase,
+  apiRequest,
   cloudEnabled,
   getSessionUser,
-  hasConfirmedSession,
   restoreSession,
   onAuthChange
-} from './supabaseClient.js';
+} from './appClient.js';
 import {
   STORES,
   pendingRecords,
@@ -31,213 +15,181 @@ import {
   markSynced,
   remove as hardRemove,
   putSynced,
-  get as getRow
+  get as getRow,
+  clearAll
 } from './indexedDB.js';
+import { chunkRows, createCoalescingQueue } from './commitQueue.js';
+import { createLocalOwner } from './localOwner.js';
+import { requestPersistentStorage } from './dataSafety.js';
 
-/** Local store name -> Supabase table. */
-export const TABLE_MAP = {
-  settings: 'settings',
-  bills: 'bills',
-  commitments: 'commitments',
-  netWorthEntries: 'net_worth_entries',
-  netWorthHistory: 'net_worth_history',
-  holdings: 'holdings',
-  portfolioHistory: 'portfolio_history',
-  pensions: 'pensions',
-  pensionHistory: 'pension_history',
-  transactions: 'transactions',
-  budgets: 'budgets',
-  accounts: 'accounts',
-  snapshots: 'snapshots'
-};
+export const TABLE_MAP = Object.fromEntries(STORES.map((store) => [store, store]));
+const LAST_PULL_KEY = 'fh-app-last-pull';
+const localOwner = createLocalOwner();
+const CLIENT_ONLY = new Set(['pending_sync', 'synced_at', '_deleted', 'table', 'owner_id', 'ownerID']);
 
-/** Tables whose primary key is not just `id` (settings is per-owner). */
-const CONFLICT_TARGET = { settings: 'owner_id,id' };
-
-/** camelCase local field -> snake_case Postgres column. */
-const COLUMN_MAP = {
-  ownerID: 'owner_id',
-  currencyCode: 'currency_code',
-  currency: 'currency_code',
-  dueDay: 'due_day',
-  validFrom: 'valid_from',
-  validTo: 'valid_to',
-  currentFlag: 'current_flag',
-  logicalId: 'logical_id'
-};
-
-const CLOUD_TO_LOCAL = Object.entries(COLUMN_MAP).reduce((acc, [local, cloud]) => {
-  if (!acc[cloud]) acc[cloud] = local;
-  return acc;
-}, {});
-
-/** Never sent to Postgres. */
-const CLIENT_ONLY = new Set(['pending_sync', 'synced_at', '_deleted', 'table']);
-
-const LAST_PULL_KEY = 'fh-cloud-last-pull';
-
-/** 'Local only' | 'Offline · saving locally' | 'Saved locally' | 'Syncing…' | 'Synced' | 'Sync error' */
 export const syncStatus = writable(cloudEnabled ? 'Saved locally' : 'Local only');
 export const syncDetail = writable('');
 export const pendingCount = writable(0);
 export const lastSyncedAt = writable('');
 export const syncing = writable(false);
 
-let flushing = false;
+/** One request per burst instead of one per record, which keeps a burst of edits
+ *  from consuming the Worker's daily request allowance. */
+const COMMIT_DELAY_MS = 1_200;
+/** Matches the Worker's MAX_PUSH_ROWS: a larger batch is rejected outright. */
+const MAX_BATCH_ROWS = 100;
+
 let remoteAppliedHandler = null;
 let teardown = null;
 
-/** Register the callback the stores use to reload after an inbound sync. */
-export function setRemoteAppliedHandler(handler) {
-  remoteAppliedHandler = handler;
+export function setRemoteAppliedHandler(handler) { remoteAppliedHandler = handler; }
+
+function queueKey(store, id) { return `${store} ${id}`; }
+
+function cleanData(record) {
+  const data = {};
+  for (const [key, value] of Object.entries(record || {})) {
+    if (CLIENT_ONLY.has(key) || key === 'id' || key === 'updated_at') continue;
+    data[key] = value;
+  }
+  return data;
 }
 
-export function toCloudRow(store, record, ownerId) {
-  const table = TABLE_MAP[store];
-  if (!table || !record?.id || !ownerId) return null;
-  const row = {
+export function toCloudRow(store, record) {
+  if (!TABLE_MAP[store] || !record?.id) return null;
+  return {
+    store,
     id: record.id,
-    owner_id: ownerId,
-    updated_at: record.updated_at || new Date().toISOString()
+    updated_at: record.updated_at || new Date().toISOString(),
+    deleted: record._deleted === true,
+    data: cleanData(record)
   };
-  Object.entries(record).forEach(([key, value]) => {
-    if (CLIENT_ONLY.has(key)) return;
-    if (key === 'id' || key === 'owner_id' || key === 'ownerID' || key === 'updated_at') return;
-    const column = COLUMN_MAP[key] || key;
-    row[column] = value === '' ? null : value;
-  });
-  return row;
 }
 
 export function fromCloudRow(row) {
-  const local = {};
-  Object.entries(row || {}).forEach(([key, value]) => {
-    if (key === 'owner_id') return;
-    local[CLOUD_TO_LOCAL[key] || key] = value;
-  });
-  local.pending_sync = false;
-  local.updated_at = row?.updated_at || new Date().toISOString();
-  return local;
+  return { ...(row.data || {}), id: row.id, updated_at: row.updated_at, _deleted: row.deleted === true };
 }
-
-
-/* ---------------------------------------------------------------- */
-/* Status bookkeeping                                               */
-/* ---------------------------------------------------------------- */
 
 async function refreshPending() {
-  try {
-    const { total } = await pendingSummary();
-    pendingCount.set(total);
-    return total;
-  } catch {
-    return get(pendingCount);
-  }
+  try { pendingCount.set((await pendingSummary()).total); } catch { /* preserve last count */ }
 }
 
-function setStatus(text, detail = '') {
-  syncStatus.set(text);
-  syncDetail.set(detail);
-}
+function setStatus(text, detail = '') { syncStatus.set(text); syncDetail.set(detail); }
 
-/** Recompute the header badge from device connectivity + session state. */
 export async function refreshSyncStatus() {
-  const pending = await refreshPending();
-  if (!cloudEnabled) {
-    setStatus('Local only', 'Add Supabase keys to sync across devices.');
-    return pending;
-  }
-  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-  const user = await getSessionUser();
-  if (!user) {
-    setStatus(pending ? `Saved locally · ${pending} pending` : 'Saved locally', 'Sign in to sync across devices.');
-    return pending;
-  }
-  if (!online) {
+  const pending = (await refreshPending(), get(pendingCount));
+  if (!cloudEnabled) { setStatus('Local only', 'Configure the application API to sync across devices.'); return pending; }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
     setStatus(pending ? `Offline · ${pending} queued` : 'Offline', 'Writes stay local and push when you are back online.');
     return pending;
   }
-  setStatus(
-    pending ? `Syncing ${pending}…` : 'Synced',
-    pending ? 'Pushing queued writes in the background.' : 'All local changes are in the cloud.'
-  );
+  const user = await getSessionUser();
+  if (!user) { setStatus(pending ? `Saved locally · ${pending} pending` : 'Saved locally', 'Sign in to sync across devices.'); return pending; }
+  setStatus(pending ? `Syncing ${pending}…` : 'Synced', pending ? 'Pushing queued writes in the background.' : 'All local changes are in the cloud.');
   return pending;
 }
 
-/* ---------------------------------------------------------------- */
-/* Push                                                             */
-/* ---------------------------------------------------------------- */
-
-async function pushRecord(store, record, ownerId) {
-  const table = TABLE_MAP[store];
-  if (!table) return false;
-
-  if (record._deleted === true) {
-    const { error } = await supabase.from(table).delete().eq('id', record.id).eq('owner_id', ownerId);
-    if (error) {
-      setStatus('Sync error', error.message);
-      return false;
-    }
-    await hardRemove(store, record.id);
+/** Reconcile one record against what the server said about it. Returns whether the
+ *  local copy is now known to match the cloud. */
+async function applyOutcome(store, record, outcome) {
+  if (!outcome?.accepted) return false;
+  if (outcome.superseded && outcome.current) {
+    // The server already holds a newer version of this record. Adopt it locally
+    // instead of leaving a permanently pending local write behind.
+    if (outcome.current.deleted) await hardRemove(store, outcome.current.id);
+    else await putSynced(store, fromCloudRow(outcome.current));
     return true;
   }
-
-  const row = toCloudRow(store, record, ownerId);
-  if (!row) return false;
-  const { error } = await supabase.from(table).upsert(row, { onConflict: CONFLICT_TARGET[table] || 'id' });
-  if (error) {
-    setStatus('Sync error', error.message);
-    return false;
-  }
-  await markSynced(store, record.id);
+  if (record._deleted === true) await hardRemove(store, record.id);
+  else await markSynced(store, record.id);
   return true;
 }
 
-/** Fire-and-forget background push for one just-written record. */
-export function syncRecord(store, record) {
-  if (!cloudEnabled || !supabase) return Promise.resolve(false);
-  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-  if (!online) {
-    refreshPending();
-    setStatus('Offline · saving locally', 'This change will sync when you are back online.');
-    return Promise.resolve(false);
+/** Push a batch of rows for one store in a single request. */
+async function pushStoreRows(store, entries) {
+  const rows = entries.map((entry) => entry.row).filter(Boolean);
+  if (!rows.length) return 0;
+  const result = await apiRequest('/api/sync/push', { method: 'POST', body: { rows } });
+  const outcomes = result.results || [];
+  let accepted = 0;
+  for (const [index, entry] of entries.entries()) {
+    // The Worker answers in request order, so index lines up with the row sent.
+    if (await applyOutcome(store, entry.record, outcomes[index])) accepted += 1;
+    entry.resolve?.(outcomes[index]?.accepted === true);
   }
-  return getSessionUser()
-    .then((user) => {
-      if (!user || !hasConfirmedSession()) {
-        refreshPending();
-        return false;
-      }
-      setStatus('Syncing…', 'Uploading your latest change.');
-      return pushRecord(store, record, user.id).then(async (ok) => {
-        await refreshSyncStatus();
-        return ok;
-      });
-    })
-    .catch(() => false);
+  return accepted;
 }
 
 /**
- * Push every queued record.
- * @param {{ all?: boolean, notify?: boolean }} options
- *   `all: true` re-pushes everything (used by "Sync now" in Backup).
- *   `notify: true` reloads the stores once finished.
+ * Send one coalesced batch. Returns a per-entry boolean aligned with `batch` so
+ * the queue can settle each caller. A failure leaves pending_sync set in
+ * IndexedDB, so the reconnect flush and the periodic safety net both retry it.
  */
-export async function flushPending({ all = false, notify = false } = {}) {
-  if (flushing || !cloudEnabled || !supabase) return { pushed: 0, failed: 0, skipped: true };
-  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-  if (!online) {
+async function flushCommitBatch(batch) {
+  // Signed out means the push could only ever 401, so do not spend a request on
+  // it. The rows keep pending_sync in IndexedDB and go out on the next sign-in.
+  if (!(await getSessionUser())) {
     await refreshSyncStatus();
-    return { pushed: 0, failed: 0, skipped: true };
+    return batch.map(() => false);
   }
-    const user = await getSessionUser();
-  if (!user || !hasConfirmedSession()) {
-    await refreshSyncStatus();
-    setStatus('Saved locally', 'Sign in to sync with the cloud.');
-    return { pushed: 0, failed: 0, skipped: true };
+  const byStore = new Map();
+  batch.forEach((entry, index) => {
+    if (!byStore.has(entry.store)) byStore.set(entry.store, []);
+    byStore.get(entry.store).push({ entry, index });
+  });
+  setStatus('Syncing…', 'Uploading your latest change.');
+  const settled = batch.map(() => false);
+  for (const [store, group] of byStore) {
+    const rows = group.map((item) => item.entry.row).filter(Boolean);
+    if (!rows.length) continue;
+    try {
+      const result = await apiRequest('/api/sync/push', { method: 'POST', body: { rows } });
+      const outcomes = result.results || [];
+      // The Worker answers in request order, so the index lines up with the row sent.
+      for (const [position, item] of group.entries()) {
+        if (await applyOutcome(store, item.entry.record, outcomes[position])) settled[item.index] = true;
+      }
+    } catch { /* leave these rows pending for the next attempt */ }
   }
+  await refreshSyncStatus();
+  return settled;
+}
 
-  flushing = true;
+const commitQueue = createCoalescingQueue({ delay: COMMIT_DELAY_MS, onFlush: flushCommitBatch });
+
+/** Flush anything still sitting in the coalescing queue right now. */
+export async function commitNow() {
+  commitQueue.cancel();
+  return commitQueue.drain();
+}
+
+export function syncRecord(store, record) {
+  if (!cloudEnabled) return Promise.resolve(false);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    // The row is already durable in IndexedDB with pending_sync set, so the
+    // reconnect flush picks it up. Holding it in memory as well would only
+    // grow without bound while the tab sits offline.
+    refreshSyncStatus();
+    return Promise.resolve(false);
+  }
+  const row = toCloudRow(store, record);
+  if (!row) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    // A newer edit for the same record replaces the queued one; the queue settles
+    // the superseded promise as not-committed so nobody is left awaiting it.
+    commitQueue.set(queueKey(store, row.id), { store, record, row, resolve });
+  });
+}
+
+export async function flushPending({ all = false } = {}) {
+  if (!cloudEnabled) return { pushed: 0, failed: 0, skipped: true };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) { await refreshSyncStatus(); return { pushed: 0, failed: 0, skipped: true }; }
+  const user = await getSessionUser();
+  if (!user) { await refreshSyncStatus(); return { pushed: 0, failed: 0, skipped: true }; }
+  // Anything already queued in memory is newer than the local pending flag, so
+  // commit it first and let the queue below carry only what IndexedDB still
+  // reports as unsynced.
+  await commitNow();
   syncing.set(true);
   let pushed = 0;
   let failed = 0;
@@ -245,120 +197,107 @@ export async function flushPending({ all = false, notify = false } = {}) {
     for (const store of STORES) {
       const queue = await pendingRecords(store, { all });
       if (!queue.length) continue;
-      setStatus(`Syncing ${store}…`, `Pushing ${queue.length} record(s).`);
-      for (const record of queue) {
-        const stillOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
-        if (!stillOnline) {
-          failed += 1;
-          break;
+      const entries = queue
+        .map((record) => ({ store, record, row: toCloudRow(store, record) }))
+        .filter((entry) => entry.row);
+      for (const batch of chunkRows(entries, MAX_BATCH_ROWS)) {
+        try {
+          pushed += await pushStoreRows(store, batch);
+        } catch {
+          failed += batch.length;
         }
-        const ok = await pushRecord(store, record, user.id);
-        if (ok) pushed += 1;
-        else failed += 1;
       }
+      failed += Math.max(0, queue.length - entries.length);
     }
   } finally {
-    flushing = false;
     syncing.set(false);
   }
-
   lastSyncedAt.set(new Date().toISOString());
-  if (notify && remoteAppliedHandler) await remoteAppliedHandler();
   await refreshSyncStatus();
   return { pushed, failed };
 }
 
-/* ---------------------------------------------------------------- */
-/* Pull                                                             */
-/* ---------------------------------------------------------------- */
+/* ------------------------------------------------------------------ */
+/* Local data ownership                                                */
+/* ------------------------------------------------------------------ */
 
-function lastPullAt() {
+/** Empty the device when it turns out to hold a different account's rows. */
+async function clearLocalStores() {
+  await commitNow();
+  commitQueue.cancel();
+  await clearAll();
+  resetPullCursor();
+}
+
+function readPullCursor() {
   try {
-    return localStorage.getItem(LAST_PULL_KEY) || '';
+    const raw = localStorage.getItem(LAST_PULL_KEY);
+    if (!raw) return { cursor: null, until: '' };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { cursor: null, until: '' };
+    return { cursor: parsed.cursor || null, until: String(parsed.until || '') };
   } catch {
-    return '';
+    return { cursor: null, until: '' };
   }
 }
 
-function setLastPullAt(value) {
-  try {
-    localStorage.setItem(LAST_PULL_KEY, value);
-  } catch {
-    /* storage disabled — pull will simply be full each time */
-  }
+function writePullCursor(cursor, until) {
+  try { localStorage.setItem(LAST_PULL_KEY, JSON.stringify({ cursor, until })); } catch { /* storage may be disabled */ }
 }
 
-/** Force the next pull to fetch everything (used by "Pull from cloud"). */
 export function resetPullCursor() {
-  try {
-    localStorage.removeItem(LAST_PULL_KEY);
-  } catch {
-    /* ignore */
+  try { localStorage.removeItem(LAST_PULL_KEY); } catch { /* ignore */ }
+}
+
+async function pullPage(cursor, until) {
+  const params = new URLSearchParams();
+  if (until) params.set('until', until);
+  if (cursor) {
+    params.set('after', cursor.updatedAt);
+    params.set('afterStore', cursor.store);
+    params.set('afterId', cursor.id);
   }
+  const query = params.toString();
+  return apiRequest(`/api/sync/pull${query ? `?${query}` : ''}`);
 }
 
-async function pullTable(store, ownerId, since) {
-  const table = TABLE_MAP[store];
-  if (!table) return [];
-  let query = supabase
-    .from(table)
-    .select('*')
-    .eq('owner_id', ownerId)
-    .order('updated_at', { ascending: true })
-    .limit(1000);
-  if (since) query = query.gt('updated_at', since);
-  const { data, error } = await query;
-  if (error) throw error;
-  return data || [];
-}
-
-/**
- * Merge cloud rows into IndexedDB (last-write-wins by `updated_at`).
- * Local rows with unpushed changes always win — they are queued for upload.
- */
 export async function pullRemote({ full = false, apply = true } = {}) {
-  if (!cloudEnabled || !supabase) return { pulled: 0, skipped: true, errors: [] };
-  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-  if (!online) return { pulled: 0, skipped: true, errors: [] };
+  if (!cloudEnabled) return { pulled: 0, skipped: true, errors: [] };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { pulled: 0, skipped: true, errors: [] };
   const user = await getSessionUser();
   if (!user) return { pulled: 0, skipped: true, errors: [] };
-
-  const since = full ? '' : lastPullAt();
   const errors = [];
   let pulled = 0;
-
+  let { cursor, until } = full ? { cursor: null, until: '' } : readPullCursor();
   syncing.set(true);
   setStatus('Syncing…', 'Checking for cloud changes.');
   try {
-    for (const store of STORES) {
-      let rows = [];
-      try {
-        rows = await pullTable(store, user.id, since);
-      } catch (error) {
-        errors.push(`${store}: ${error.message}`);
-        continue;
-      }
-      for (const row of rows) {
-        const local = await getRow(store, row.id);
+    for (let page = 0; page < 200; page += 1) {
+      const result = await pullPage(cursor, until);
+      until = result.serverTime || until;
+      for (const row of result.rows || []) {
+        const local = await getRow(row.store, row.id);
         if (local?.pending_sync) continue;
         if (local && String(local.updated_at || '') > String(row.updated_at || '')) continue;
-        await putSynced(store, fromCloudRow(row));
+        if (row.deleted) await hardRemove(row.store, row.id);
+        else await putSynced(row.store, fromCloudRow(row));
         pulled += 1;
       }
+      cursor = result.nextCursor || cursor;
+      if (!result.hasMore) break;
     }
+  } catch (error) {
+    errors.push(error.message);
+    setStatus('Sync error', error.message);
   } finally {
     syncing.set(false);
   }
-
-  if (errors.length) setStatus('Sync error', errors[0]);
-  else if (pulled) setLastPullAt(new Date().toISOString());
-
+  if (!errors.length) writePullCursor(cursor, until);
   if (apply && pulled && remoteAppliedHandler) await remoteAppliedHandler();
   await refreshPending();
   return { pulled, errors };
 }
 
-/** Push every local row, then pull newer remote rows. */
 export async function syncNow() {
   const push = await flushPending({ all: true });
   const pull = await pullRemote();
@@ -367,74 +306,75 @@ export async function syncNow() {
   return { ...push, pulled: pull.pulled };
 }
 
-/* ---------------------------------------------------------------- */
-/* Lifecycle                                                        */
-/* ---------------------------------------------------------------- */
-
-/**
- * Wire connectivity + auth listeners so queued writes push themselves.
- * Safe to call when Supabase is not configured (returns a no-op teardown).
- */
 export async function initSyncEngine() {
   if (teardown) return teardown;
   await restoreSession();
+  // Best effort, and deliberately not awaited into the boot path: this is a hint
+  // to the browser, not something the user is waiting on, and a refusal is normal.
+  requestPersistentStorage().catch(() => {});
   await refreshPending();
-
   if (!cloudEnabled) {
-    setStatus('Local only', 'Add Supabase keys to sync across devices.');
+    setStatus('Local only', 'Configure the application API to sync across devices.');
     return () => {};
   }
-
-  const onlineHandler = () => {
-    refreshSyncStatus();
-    flushPending()
-      .then(() => pullRemote())
-      .catch(() => {});
-  };
+  const onlineHandler = () => { refreshSyncStatus(); flushPending().then(() => pullRemote()).catch(() => {}); };
   const offlineHandler = () => refreshSyncStatus();
-
+  // A tab that is closed or backgrounded may never run its debounce timer, so
+  // commit whatever is outstanding at that moment instead of losing the window.
+  const pageHideHandler = () => { commitNow().catch(() => {}); };
+  const visibilityHandler = () => { if (document.visibilityState === 'hidden') pageHideHandler(); };
   if (typeof window !== 'undefined') {
     window.addEventListener('online', onlineHandler);
     window.addEventListener('offline', offlineHandler);
+    window.addEventListener('pagehide', pageHideHandler);
   }
-
-  const unsubscribe = onAuthChange((_event, user) => {
-    if (user) {
-      flushPending()
-        .then(() => pullRemote())
-        .catch(() => {});
-    } else {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', visibilityHandler);
+  }
+  const unsubscribe = onAuthChange(async (_event, user) => {
+    if (!user) {
+      // The local-owner marker is deliberately kept across sign-out. Forgetting
+      // it here is precisely the bug that let one account's rows reach another:
+      // the next sign-in would find an empty marker, conclude the local data was
+      // unowned, keep it, and flush the previous account's pending rows into
+      // whichever account arrived. Keep the marker, and let the comparison below
+      // decide. Same account signing back in matches, so nothing is cleared.
       refreshSyncStatus();
+      return;
     }
+    if (!localOwner.claim(user.id)) {
+      // Must happen before the flush: clearing afterwards still pushes the old
+      // rows up on this session, where the server cannot tell them apart.
+      console.warn('Local data belonged to a different account; clearing it before syncing');
+      await clearLocalStores();
+    }
+    await flushPending();
+    await pullRemote();
   });
-
+  // Safety net only. It costs nothing while idle because the flush below bails
+  // out before any request when no row is pending.
   const interval = setInterval(() => {
-    const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-    if (online) flushPending().catch(() => {});
+    if (typeof navigator === 'undefined' || navigator.onLine) flushPending().catch(() => {});
   }, 60_000);
-
   teardown = () => {
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', onlineHandler);
       window.removeEventListener('offline', offlineHandler);
+      window.removeEventListener('pagehide', pageHideHandler);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', visibilityHandler);
     }
     unsubscribe?.();
     clearInterval(interval);
+    commitQueue.cancel();
     teardown = null;
   };
-
   const user = await getSessionUser();
-  if (user) {
-    flushPending()
-      .then(() => pullRemote())
-      .catch(() => {});
-  } else {
-    await refreshSyncStatus();
-  }
+  if (user) flushPending().then(() => pullRemote()).catch(() => {});
+  else await refreshSyncStatus();
   return teardown;
 }
 
-export function teardownSyncEngine() {
-  teardown?.();
-}
+export function teardownSyncEngine() { teardown?.(); }
 

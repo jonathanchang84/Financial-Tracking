@@ -1,14 +1,21 @@
-# Cloudflare Pages headers for the static dist/ artifact.
+# Cloudflare Workers static-asset headers for the PWA shell.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(), microphone=(), camera=()
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'
 
 /sw.js
-  Cache-Control: no-cache
+  Cache-Control: no-cache, no-store, must-revalidate
   Service-Worker-Allowed: /
+
+# Never let an intermediary serve a stale shell: a cached index.html keeps
+# pointing at the previous build's hashed assets.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
 
 /manifest.webmanifest
   Cache-Control: no-cache

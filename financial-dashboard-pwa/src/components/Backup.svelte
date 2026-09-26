@@ -1,7 +1,7 @@
 <script>
-  /** Local JSON export/import plus the optional Supabase push/pull controls. */
+  /** Local JSON export/import plus the optional application cloud push/pull controls. */
   import Modal from './Modal.svelte';
-  import { session, cloudEnabled } from '../services/supabaseClient.js';
+  import { session, cloudEnabled } from '../services/appClient.js';
   import { syncStatus, syncDetail, pendingCount, lastSyncedAt, syncNow } from '../services/syncEngine.js';
   import {
     downloadBackup,
@@ -110,7 +110,8 @@
 <Modal title="Backup and restore" eyebrow="DATA CONTROL" onClose={onClose}>
   <p class="muted">
     Your data never leaves this device unless you export it or sign in for cloud sync. Everything works
-    offline; queued writes push themselves when connectivity and a session are both available.
+    offline; each change is committed to the database automatically once you are back online and signed
+    in, so there is no sync step to remember.
   </p>
 
   <div class="button-row" style="margin-top:10px">
@@ -142,11 +143,17 @@
   <div class="section-heading">
     <div>
       <p class="eyebrow">CLOUD SYNC</p>
-      <h3>{cloudEnabled ? 'Supabase connected' : 'Local only'}</h3>
+      <h3>{cloudEnabled ? 'Application cloud connected' : 'Local only'}</h3>
       <p class="hint">{$syncStatus}{$syncDetail ? ` · ${$syncDetail}` : ''}</p>
     </div>
     <span class="badge">{cloudEnabled ? ($session ? 'signed in' : 'no session') : 'unconfigured'}</span>
   </div>
+
+  <p class="hint">
+    Every change is committed to the database automatically a moment after you make it, so there is no step
+    to remember. These buttons are repair tools: use one only if a change has not appeared on another
+    device, or after restoring a backup.
+  </p>
 
   <p class="hint">
     Pending writes: {$pendingCount}{$lastSyncedAt ? ` · last sync ${new Date($lastSyncedAt).toLocaleTimeString()}` : ''}
@@ -160,7 +167,7 @@
       Pull from cloud
     </button>
     <button class="primary-button" type="button" disabled={!cloudEnabled || busy === 'sync'} onclick={syncEverything}>
-      Sync now
+      Re-sync everything
     </button>
   </div>
 

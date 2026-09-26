@@ -1,7 +1,7 @@
 {
   "name": "Financial Dashboard",
   "short_name": "FinDash",
-  "description": "Offline-first personal finance dashboard with optional Supabase sync.",
+  "description": "Offline-first personal finance dashboard with optional account sync.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

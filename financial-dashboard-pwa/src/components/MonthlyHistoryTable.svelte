@@ -54,7 +54,7 @@
 {/if}
 
 <style>
-  .monthly-history-wrap { margin-top: 2px; border: 1px solid var(--line); border-radius: 10px; }
+  .monthly-history-wrap { width: 100%; min-width: 0; max-width: 100%; margin-top: 2px; border: 1px solid var(--line); border-radius: 10px; }
   .monthly-history-table { min-width: 520px; }
   .monthly-history-table col.history-month { width: 120px; }
   .monthly-history-table col.history-value { width: 130px; }

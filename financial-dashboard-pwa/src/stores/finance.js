@@ -21,7 +21,8 @@ import {
 } from '../services/indexedDB.js';
 import { newId } from '../services/recordHelpers.js';
 import { num, currencyOf, seriesNameOf } from '../services/runway.js';
-import { dayKey, addDaysKey } from '../services/dates.js';
+import { dayKey, addDaysKey, isValidDate, parseDate } from '../services/dates.js';
+import { normaliseIncomeStreams, resolveMainPayday } from '../services/income.js';
 import { syncRecord, setRemoteAppliedHandler, refreshSyncStatus } from '../services/syncEngine.js';
 
 /* ------------------------------------------------------------------ */
@@ -252,6 +253,7 @@ export const DEFAULT_SETTINGS = {
   defaultCurrency: '',
   paidExpenses: {},
   payday: '',
+  incomeStreams: [],
   portfolioGrowth: 0.05,
   pensionGrowth: 0.05,
   pensionPotGrowth: {},
@@ -284,11 +286,17 @@ export async function loadSetting(key, fallback = undefined) {
 }
 
 /** Balance + payday figures shared by Overview and Cash flow. */
-export const cashSettings = derived(settings, ($settings) => ({
-  balance: num($settings.balance),
-  currency: $settings.balanceCurrency || $settings.currentBalanceCurrencyCode || 'USD',
-  payday: $settings.payday || $settings.nextPayDate || ''
-}));
+export const cashSettings = derived(settings, ($settings) => {
+  const main = resolveMainPayday($settings.incomeStreams, new Date());
+  return {
+    balance: num($settings.balance),
+    currency: $settings.balanceCurrency || $settings.currentBalanceCurrencyCode || 'USD',
+    // Falls back to the legacy scalar so an account that has never opened the
+    // new editor keeps a working runway.
+    payday: main?.key || $settings.payday || $settings.nextPayDate || '',
+    incomeStreams: $settings.incomeStreams || []
+  };
+});
 
 /* ------------------------------------------------------------------ */
 /* Derived views                                                      */
@@ -342,7 +350,7 @@ function hydrate(data) {
   Object.entries(ENTITY_STORES).forEach(([name, store]) => {
     store.set(sortRows(name, data[name] || []));
   });
-  settings.set({ ...DEFAULT_SETTINGS, ...(data.settings || {}) });
+  settings.set({ ...DEFAULT_SETTINGS, ...withIncomeStreams(data.settings || {}) });
   const current = get(settings);
   const code = RATES[current.defaultCurrency]
     ? current.defaultCurrency
@@ -350,6 +358,27 @@ function hydrate(data) {
       ? current.balanceCurrency
       : 'USD';
   displayCurrency.set(code);
+}
+
+/**
+ * Income streams are a list, the older `payday` was a single date. Turn the
+ * stored list into the canonical shape on every read, and when there is no list
+ * at all, promote the old scalar into one stream so an existing account keeps
+ * working without being asked to re-enter anything. The legacy `payday` key is
+ * deliberately left in place: it is the fallback for the runway and it means an
+ * old JSON backup still restores.
+ */
+function withIncomeStreams(raw) {
+  const stored = normaliseIncomeStreams(raw.incomeStreams);
+  if (stored.length) return { ...raw, incomeStreams: stored };
+  const legacy = String(raw.payday || raw.nextPayDate || '').trim();
+  if (!isValidDate(legacy)) return { ...raw, incomeStreams: [] };
+  return {
+    ...raw,
+    incomeStreams: normaliseIncomeStreams([
+      { id: 'migrated-income', name: 'Income', dayOfMonth: parseDate(legacy).getDate(), isMain: true }
+    ])
+  };
 }
 
 /** Give migrated snapshots a valid SCD Type 2 chain (latest version open). */

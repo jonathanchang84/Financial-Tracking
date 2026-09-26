@@ -103,21 +103,22 @@
 {/if}
 
 <style>
-  .pension-projection { display: grid; gap: 10px; }
-  .projection-plot { background: var(--panel-alt); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 8px; overflow-x: auto; }
+  .pension-projection { display: grid; gap: 10px; min-width: 0; max-width: 100%; }
+  .projection-plot { width: 100%; min-width: 0; max-width: 100%; background: var(--panel-alt); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 8px; overflow-x: auto; }
   .projection-bars { min-width: max(560px, calc(var(--projection-years) * 42px)); height: 250px; display: flex; align-items: end; gap: 8px; }
   .projection-column { height: 100%; flex: 1 0 34px; min-width: 34px; display: flex; flex-direction: column; justify-content: end; align-items: center; gap: 7px; }
   .projection-stack { width: min(30px, 78%); min-height: 2px; display: flex; flex-direction: column-reverse; justify-content: start; border-radius: 5px 5px 2px 2px; overflow: hidden; background: var(--line); }
   .projection-segment { display: block; width: 100%; min-height: 1px; }
   .projection-year { color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .projection-scroll-hint { color: var(--accent); }
-  .projection-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 0; margin: 0; font-size: 0.78rem; }
-  .projection-legend li { display: inline-flex; align-items: center; gap: 5px; }
+  .projection-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 14px; min-width: 0; max-width: 100%; padding: 0; margin: 0; font-size: 0.78rem; }
+  .projection-legend li { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; }
+  .projection-legend li > span:not(.legend-swatch) { min-width: 0; overflow-wrap: anywhere; }
   .projection-legend small { display: block; font-size: 0.65rem; }
   .legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .monthly-details { border-top: 1px solid var(--line); padding-top: 8px; }
   .monthly-details summary { cursor: pointer; color: var(--accent); font-size: 0.82rem; }
-  .monthly-table-wrap { margin-top: 8px; }
+  .monthly-table-wrap { width: 100%; min-width: 0; max-width: 100%; margin-top: 8px; }
   .monthly-projection-table { min-width: 720px; width: 100%; border-collapse: collapse; font-size: 0.8rem; }
   .monthly-projection-table col.projection-month { width: 105px; }
   .monthly-projection-table col.projection-value { width: 140px; }

@@ -82,6 +82,29 @@ export function shiftWeekend(value) {
 }
 
 /**
+ * Saturday -> Friday, Sunday -> Friday — the *opposite* direction to
+ * `shiftWeekend`, and deliberately a separate function. A bill cannot be paid
+ * before it is due, so a weekend bill moves forward to Monday. Income is
+ * normally received on the Friday before, so a weekend payday moves *back*.
+ * Keeping these apart means changing one can never silently alter the other.
+ */
+export function shiftToPreviousFriday(value) {
+  const date = startOfDay(value);
+  const weekday = date.getDay();
+  if (weekday === 6) date.setDate(date.getDate() - 1);
+  else if (weekday === 0) date.setDate(date.getDate() - 2);
+  return date;
+}
+
+/** Clamp a day-of-month into `monthDate`'s month, so the 31st is the 30th in April. */
+export function occurrenceInMonth(dayOfMonth, monthDate) {
+  const base = startOfDay(monthDate);
+  const lastDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  const day = Math.min(31, Math.max(1, Math.trunc(Number(dayOfMonth) || 1)));
+  return new Date(base.getFullYear(), base.getMonth(), Math.min(day, lastDay));
+}
+
+/**
  * Due date for a recurring bill inside the calendar month of `monthDate`.
  * The stored `dueDay` is clamped to the length of that month, then shifted off
  * the weekend: Saturday and Sunday due dates are paid on Monday.

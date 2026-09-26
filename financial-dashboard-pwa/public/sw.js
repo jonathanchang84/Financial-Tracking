@@ -1,11 +1,12 @@
 /* Offline-first service worker for the compiled Vite `/dist` build. */
-const VERSION = 'findash-v11';
+const VERSION = 'findash-v13';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
-// Never cache these — they must always hit the network when online.
-const BYPASS = [/\/sw\.js$/, /supabase\.co/, /\/_headers$/];
+// Never cache application APIs or the worker script; auth/sync responses contain
+// user-specific state and must always reach the Cloudflare Worker.
+const BYPASS = [/\/sw\.js$/, /^\/api\//, /\/_headers$/];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -17,6 +18,10 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  // Bumping VERSION on every deploy is what invalidates the cached bundle:
+  // these cache names are all prefixed with it, so stale shells and stale
+  // hashed assets from previous builds are dropped here. Do not remove this
+  // filter — it is the only thing that retires an old build.
   event.waitUntil(
     caches
       .keys()

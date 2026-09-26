@@ -32,15 +32,21 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body {
+  width: 100%; max-width: 100%; min-width: 0; margin: 0; padding: 0;
+  overflow-x: hidden;
+}
+html, body, #app { min-width: 0; }
+#app { width: 100%; max-width: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
+  overflow-wrap: anywhere;
 }
-h1, h2, h3, h4, p, ol, ul { margin: 0 0 8px; }
+h1, h2, h3, h4, p, ol, ul { margin: 0 0 8px; overflow-wrap: anywhere; }
 h1 { font-size: 1.4rem; }
 h2 { font-size: 1.2rem; }
 h3 { font-size: 1.02rem; }
@@ -48,12 +54,19 @@ a { color: var(--accent); }
 small { color: var(--muted); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.app-shell { max-width: 1120px; margin: 0 auto; padding: 14px 16px 92px; }
+.app-shell { width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 14px 16px 92px; }
 .app-header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 6px 0 14px; flex-wrap: wrap;
 }
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.app-header > *, .header-actions, .header-actions > *,
+.content, .content > *, .fh-grid, .fh-grid > *, .fh-metrics, .fh-metrics > *,
+.fh-form, .fh-form > *, .panel, .view-heading, .view-heading > *,
+.section-heading, .section-heading > *, .panel-heading, .panel-heading > *,
+.account-settings, .account-section, form, label, .stack-list, .stack-row {
+  min-width: 0;
+  max-width: 100%;
+}
 .eyebrow {
   font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--muted); margin: 0 0 2px;
@@ -67,18 +80,24 @@ small { color: var(--muted); }
 .sync-pill {
   font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 4px 10px; background: var(--panel); white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 .content { display: grid; gap: 16px; }
 .fh-grid { display: grid; gap: 16px; }
+.dashboard-summary-grid { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
 .panel {
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  min-width: 0; max-width: 100%;
 }
 .section-heading, .panel-heading {
   display: flex; justify-content: space-between; align-items: baseline;
+  flex-wrap: wrap; gap: 8px;
 }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; width: auto; }
+.app-header > div:first-child { flex: 1 1 220px; }
 
-.fh-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.fh-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; }
 .fh-metric {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 14px; display: flex; flex-direction: column; gap: 2px;
@@ -86,19 +105,21 @@ small { color: var(--muted); }
 .fh-metric strong { font-size: 1.3rem; }
 .fh-metric h3 { font-size: 0.95rem; }
 
-.fh-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.fh-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; align-items: end; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); }
 label.compact { flex-direction: row; align-items: center; gap: 6px; }
 label.checkbox { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 input, select {
   font: inherit; color: var(--text); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  min-width: 0; max-width: 100%;
 }
 input:disabled, select:disabled { opacity: 0.7; }
 
 button, .file-button {
   font: inherit; cursor: pointer; border-radius: 999px; padding: 8px 16px;
   border: 1px solid transparent; transition: filter 0.15s ease, background 0.15s ease;
+  max-width: 100%; white-space: normal;
 }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
 .primary-button { background: var(--accent); color: var(--accent-text); font-weight: 600; }
@@ -121,9 +142,10 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .stack-row > span:last-child { flex-direction: row; align-items: center; gap: 6px; }
 
 .fh-scroll, .table-scroll {
-  max-width: 100%;
+  width: 100%; min-width: 0; max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 .fh-scroll > table, .table-scroll > table { width: 100%; }
 table.fh-table, table.grid {
@@ -164,6 +186,47 @@ table.fh-table caption { text-align: left; }
 .fh-table.monthly-history-table, .fh-table.monthly-projection-table { table-layout: fixed; }
 .view-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 
+/* Income streams: the main payday row is highlighted, and its inputs are sized
+   for short values (a day of the month) rather than stretching the column. */
+.fh-table tr.primary-row { background: var(--accent-soft, rgba(56, 132, 255, 0.07)); }
+.fh-table tr.primary-row td { font-weight: 600; }
+.fh-table input.fh-number { width: 78px; text-align: right; }
+.fh-table td .hint { margin: 2px 0 0; font-size: 0.72rem; font-weight: 400; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Data protection pill. The default state must not look like a healthy state:
+   "This device only" means the browser profile holds the only copy of the
+   records, and "Not syncing" means something has genuinely failed to commit. */
+.sync-pill.warn {
+  border-color: var(--warn-border, #d9a441);
+  background: var(--warn-soft, rgba(217, 164, 65, 0.16));
+  color: var(--warn-text, #8a6414);
+}
+.sync-pill.alert {
+  border-color: var(--alert-border, #d9534f);
+  background: var(--alert-soft, rgba(217, 83, 79, 0.14));
+  color: var(--alert-text, #a02c28);
+  font-weight: 600;
+}
+[data-theme='dark'] .sync-pill.warn { color: #f0c674; background: rgba(217, 164, 65, 0.18); border-color: rgba(217, 164, 65, 0.5); }
+[data-theme='dark'] .sync-pill.alert { color: #ff8f88; background: rgba(217, 83, 79, 0.2); border-color: rgba(217, 83, 79, 0.55); }
+
+.protection-banner {
+  display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 12px 14px;
+  border: 1px solid var(--warn-border, #d9a441); border-radius: 10px;
+  background: var(--warn-soft, rgba(217, 164, 65, 0.12));
+}
+.protection-banner .eyebrow { margin: 0 0 2px; color: var(--warn-text, #8a6414); }
+.protection-banner .hint { margin: 0; font-weight: 400; }
+.protection-banner .banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+[data-theme='dark'] .protection-banner { border-color: rgba(217, 164, 65, 0.5); background: rgba(217, 164, 65, 0.16); }
+[data-theme='dark'] .protection-banner .eyebrow { color: #f0c674; }
+
+
 .badge {
   display: inline-block; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase;
   border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted);
@@ -182,11 +245,27 @@ table.fh-table caption { text-align: left; }
 }
 .modal {
   background: var(--panel); color: var(--text); border-radius: var(--radius);
-  border: 1px solid var(--line); width: min(520px, 100%); padding: 20px;
+  border: 1px solid var(--line); width: min(520px, 100%); max-width: 100%; min-width: 0; padding: 20px;
   max-height: 90vh; overflow: auto; box-shadow: var(--shadow);
 }
 .modal form { display: grid; gap: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.account-settings { display: grid; gap: 16px; }
+.account-section { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+.account-section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.account-section-heading h4 { margin: 0; }
+.account-section form { display: grid; gap: 10px; }
+.account-section input[readonly] { opacity: 0.75; }
+.security-note { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-alt); }
+.account-secret-list { display: grid; gap: 8px; }
+.account-secret { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.account-secret-summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.account-secret-summary > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.account-secret-summary strong { overflow-wrap: anywhere; }
+.account-secret-summary small { font-size: 0.75rem; }
+.account-inline-form { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.account-secret-form { margin-top: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-alt); }
+.account-footer-actions { border-top: 1px solid var(--line); padding-top: 12px; }
 
 .toast {
   position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%) translateY(16px);
@@ -199,7 +278,7 @@ table.fh-table caption { text-align: left; }
 
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center;
-  gap: 2px; background: var(--panel); border-top: 1px solid var(--line);
+  gap: 2px; width: 100%; max-width: 100%; background: var(--panel); border-top: 1px solid var(--line);
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); z-index: 40; overflow-x: auto;
 }
 .nav-item {
@@ -212,6 +291,7 @@ table.fh-table caption { text-align: left; }
 
 @media (max-width: 640px) {
   .app-shell { padding: 12px 12px 92px; }
+  .bottom-nav { justify-content: flex-start; }
   .fh-metric strong { font-size: 1.15rem; }
   .modal-actions { justify-content: stretch; }
   .modal-actions button { flex: 1; }
