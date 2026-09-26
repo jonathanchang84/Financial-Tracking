@@ -1,23 +1,35 @@
 <script>
   /** Workbook-aligned tax-adjusted redundancy runway calculator. */
-  import { settings, saveSettings, displayCurrency, money, convertCurrency } from '../stores/finance.js';
+  import { settings, saveSettings, displayCurrency, money, convertCurrency, DEFAULT_SETTINGS } from '../stores/finance.js';
   import { redundancyProjection } from '../services/financeCalculations.js';
   import { num } from '../services/runway.js';
   import { errorToast, showToast } from '../stores/ui.js';
   import CurrencySelect from './CurrencySelect.svelte';
 
-  let form = $state({ payout: '', threshold: '30000', taxRate: '40', spends: ['5800', '5100', '3800'] });
+  // The defaults live in DEFAULT_SETTINGS and nowhere else. They used to be
+  // written out here as well, so the form's placeholder could disagree with the
+  // value actually stored, and changing one meant finding all three copies.
+  const blankForm = () => ({
+    payout: '',
+    threshold: String(DEFAULT_SETTINGS.redundancyTaxFreeThreshold),
+    taxRate: String(DEFAULT_SETTINGS.redundancyTaxRate * 100),
+    spends: DEFAULT_SETTINGS.redundancySpends.map(String)
+  });
+
+  let form = $state(blankForm());
   let syncedKey = '';
   $effect(() => {
     const current = $settings;
     const key = `${current.redundancyPayout}|${current.redundancyTaxFreeThreshold}|${current.redundancyTaxRate}|${JSON.stringify(current.redundancySpends || [])}`;
     if (key === syncedKey) return;
     syncedKey = key;
+    // `hydrate` spreads DEFAULT_SETTINGS first, so these are always populated and
+    // need no fallback of their own.
     form = {
-      payout: current.redundancyPayout != null ? String(current.redundancyPayout) : '',
-      threshold: current.redundancyTaxFreeThreshold != null ? String(current.redundancyTaxFreeThreshold) : '30000',
-      taxRate: current.redundancyTaxRate != null ? String(num(current.redundancyTaxRate) * 100) : '40',
-      spends: (current.redundancySpends || [5800, 5100, 3800]).map(String)
+      payout: String(current.redundancyPayout ?? ''),
+      threshold: String(current.redundancyTaxFreeThreshold),
+      taxRate: String(num(current.redundancyTaxRate) * 100),
+      spends: (current.redundancySpends || DEFAULT_SETTINGS.redundancySpends).map(String)
     };
   });
 

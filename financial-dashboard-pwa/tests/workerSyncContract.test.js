@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import { assertEmailAvailable, assertUsableToken, decoyRecoveryQuestion } from '../worker/auth.js';
 import { base64UrlToBytes } from '../worker/crypto.js';
+import { AUTH_LIMITS, limitFor } from '../worker/limits.js';
 import { normalizeTimestamp } from '../worker/sync.js';
 import { AppError, SESSION_COOKIE, STORES, cleanSyncData, checkOrigin, cookieValue, normalizeIp, normalizeSecretPayload, rateLimit } from '../worker/support.js';
 
@@ -74,6 +75,43 @@ test('does not report a false collision when the new address is the same account
     () => assertEmailAvailable({ id: 'someone-else', email: 'taken@example.com' }, 'user-1'),
     (error) => error instanceof AppError && error.status === 409 && error.code === 'account_exists'
   );
+});
+
+test('rate limits live in one table and every protected route has an entry', async () => {
+  // The limits were literals at seven call sites, so a typo or a forgotten route
+  // was invisible. They are now named policy, and this pins the routes that must
+  // never fall through to the default.
+  const routes = ['signup', 'signin', 'recovery-questions', 'recover', 'reset-password', 'change-password', 'email-change'];
+  for (const route of routes) {
+    const policy = AUTH_LIMITS[route];
+    assert.ok(policy, `${route} has no entry in AUTH_LIMITS`);
+    assert.ok(policy.attempts > 0, `${route} allows no attempts`);
+    assert.ok(policy.windowSeconds >= 60, `${route} has a window under a minute`);
+  }
+  // Creating an account is not a credential guess; taking an existing password is.
+  assert.ok(AUTH_LIMITS.signup.attempts > AUTH_LIMITS.signin.attempts, 'signup should be looser than signin');
+
+  // Every route rateLimit() is actually called with must be a known key.
+  const source = await readFile(new URL('../worker/auth.js', import.meta.url), 'utf8');
+  const called = [...source.matchAll(/rateLimit\(env, request, '([^']+)'\)/g)].map((match) => match[1]);
+  assert.ok(called.length >= 7, `only ${called.length} rate-limited routes found`);
+  for (const route of called) {
+    assert.ok(limitFor(route) === AUTH_LIMITS[route], `${route} is rate limited but missing from the table`);
+  }
+});
+
+test('an unknown rate-limit route falls back to the tightest policy', () => {
+  // Failing closed matters more than convenience: a typo in a route name must not
+  // silently grant unlimited attempts. Inherited object properties are not routes
+  // either, so the lookup must not be a bare property read.
+  const tightest = { attempts: 10, windowSeconds: 900 };
+  assert.deepEqual(limitFor('not-a-route'), tightest);
+  assert.deepEqual(limitFor('toString'), tightest, 'inherited object properties are not routes');
+  assert.deepEqual(limitFor('constructor'), tightest);
+  assert.deepEqual(limitFor(''), tightest);
+  // The real entries are the table's own objects, not copies of the fallback.
+  assert.equal(limitFor('signin'), AUTH_LIMITS.signin);
+  assert.equal(limitFor('signup'), AUTH_LIMITS.signup);
 });
 
 test('a rate-limited request states how long to wait instead of an open-ended delay', async () => {

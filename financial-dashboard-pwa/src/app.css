@@ -77,7 +77,22 @@ small { color: var(--muted); }
 .positive { color: var(--positive); }
 .negative { color: var(--danger); }
 
-.sync-pill {
+/* Where the exchange rates in the figures came from, and when. A figure that
+   silently uses stale rates is worse than one that admits to it. */
+.rate-note {
+  align-self: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rate-note.warn {
+  color: var(--warn-text, #b45309);
+}
+@media (max-width: 720px) {
+  .rate-note { display: none; }
+}
+
   font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 4px 10px; background: var(--panel); white-space: nowrap;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis;
@@ -211,6 +226,15 @@ table.fh-table caption { text-align: left; }
   color: var(--alert-text, #a02c28);
   font-weight: 600;
 }
+/* A protection warning doubles as the control that fixes it, so it must look
+   and behave like a button, not a label. */
+.sync-pill.as-button {
+  font: inherit; cursor: pointer;
+  border-style: solid; border-width: 1px;
+}
+.sync-pill.as-button:hover { filter: brightness(0.96); }
+.sync-pill.as-button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
 [data-theme='dark'] .sync-pill.warn { color: #f0c674; background: rgba(217, 164, 65, 0.18); border-color: rgba(217, 164, 65, 0.5); }
 [data-theme='dark'] .sync-pill.alert { color: #ff8f88; background: rgba(217, 83, 79, 0.2); border-color: rgba(217, 83, 79, 0.55); }
 

@@ -14,7 +14,8 @@
   import Auth from './components/Auth.svelte';
   import CurrencySelect from './components/CurrencySelect.svelte';
   import ProtectionBanner from './components/ProtectionBanner.svelte';
-  import { initStores } from './stores/finance.js';
+  import { initStores, exchangeRates } from './stores/finance.js';
+  import { describeRates } from './services/rates.js';
   import { initSyncEngine, teardownSyncEngine, pendingCount } from './services/syncEngine.js';
   import { protectionCopy, protectionState, readDismissedAt, rememberDismissedAt, shouldShowProtectionBanner } from './services/dataSafety.js';
   import { session } from './services/appClient.js';
@@ -43,6 +44,12 @@
     pending: $pendingCount
   }));
   const protectionText = $derived(protectionCopy(protection));
+  // States where the numbers came from and when. Declared here rather than inline
+  // in the template because a `$derived` referenced only in markup is easy to
+  // delete, and an undeclared one silently renders as empty rather than failing.
+  const rateNote = $derived(
+    $exchangeRates ? describeRates($exchangeRates) : { label: '', tone: 'ok' }
+  );
 
   // Nudge once there is something to lose, and remember the dismissal along with
   // the record count at the time so it reappears only if there is much more at
@@ -110,14 +117,31 @@
         <h1>Financial Dashboard</h1>
       </div>
       <div class="header-actions">
-        <span
-          class="sync-pill"
-          class:alert={protectionText.tone === 'alert'}
-          class:warn={protectionText.tone === 'warn'}
-          title={protectionText.detail}
-          aria-live="polite"
-        >{protectionText.label}{$pendingCount && protection === 'stalled' ? ` · ${$pendingCount}` : ''}</span>
+        {#if protection === 'stalled' || protection === 'local-only'}
+          <!-- The "Not syncing" copy tells the user to re-sync, so the control that
+               does it has to be reachable from the warning itself rather than
+               only from the Backup dialog. -->
+          <button
+            class="sync-pill as-button"
+            class:alert={protectionText.tone === 'alert'}
+            class:warn={protectionText.tone === 'warn'}
+            type="button"
+            title={protectionText.detail}
+            aria-live="polite"
+            onclick={() => (showBackup = true)}
+          >{protectionText.label}{$pendingCount && protection === 'stalled' ? ` · ${$pendingCount}` : ''}</button>
+        {:else}
+          <span
+            class="sync-pill"
+            title={protectionText.detail}
+            aria-live="polite"
+          >{protectionText.label}</span>
+        {/if}
         <CurrencySelect compact />
+        <!-- Live rates with the date they were fetched. Silent staleness is what
+             made the old hard-coded table wrong for months without anyone noticing,
+             so the "as of" is stated rather than implied. -->
+        <span class="rate-note" class:warn={rateNote.tone === 'warn'}>{rateNote.label}</span>
         <button class="icon-button" type="button" title="Toggle colour theme" onclick={toggleTheme}>
           {$theme === 'dark' ? '☾' : '☼'}
         </button>

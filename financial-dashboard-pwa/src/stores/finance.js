@@ -23,6 +23,7 @@ import { newId } from '../services/recordHelpers.js';
 import { num, currencyOf, seriesNameOf } from '../services/runway.js';
 import { dayKey, addDaysKey, isValidDate, parseDate } from '../services/dates.js';
 import { normaliseIncomeStreams, resolveMainPayday } from '../services/income.js';
+import { FALLBACK_RATES, fetchLiveRates, isStale, normaliseSnapshot, pickRates, usableRate } from '../services/rates.js';
 import { syncRecord, setRemoteAppliedHandler, refreshSyncStatus } from '../services/syncEngine.js';
 
 /* ------------------------------------------------------------------ */
@@ -30,18 +31,12 @@ import { syncRecord, setRemoteAppliedHandler, refreshSyncStatus } from '../servi
 /* ------------------------------------------------------------------ */
 
 /** Fixed rates from the prototype's `exchangeRates` table. */
-export const RATES = {
-  USD: 1,
-  EUR: 0.92,
-  GBP: 0.79,
-  CAD: 1.36,
-  AUD: 1.53,
-  JPY: 149.5,
-  CHF: 0.88,
-  CNY: 7.24,
-  INR: 83.12,
-  PLN: 4.0
-};
+/**
+ * The hand-written table, kept as a named constant because it is also the
+ * currency list: the picker, the code and the offline floor all read from it.
+ * The values live in `rates.js` so there is a single copy.
+ */
+export const RATES = FALLBACK_RATES;
 
 export const CURRENCY_NAMES = {
   USD: 'US Dollar',
@@ -59,15 +54,53 @@ export const CURRENCY_NAMES = {
 export const CURRENCIES = Object.keys(RATES);
 
 /** `USD 100` -> `92 EUR` style conversion between any two supported codes. */
+/**
+ * The current rate table. Populated from the live provider when reachable and
+ * from the last stored snapshot otherwise; `rates.js` owns the precedence.
+ */
+export const exchangeRates = writable(null);
+
 export function convertCurrency(amount, from = 'USD', to = 'USD') {
   const value = num(amount);
   if (from === to) return value;
-  const fromRate = RATES[from] || 1;
-  const toRate = RATES[to] || 1;
+  const table = get(exchangeRates)?.rates || RATES;
+  const fromRate = usableRate(table[from]) || 1;
+  const toRate = usableRate(table[to]) || 1;
   return (value / fromRate) * toRate;
 }
 
-/** Historic formatter: narrow symbols, whole units shown without decimals. */
+/**
+ * Adopt a rate snapshot: the live one if there is one, otherwise the last stored
+ * one, otherwise the hand-written table. `exchangeRates` is never null after boot,
+ * so every screen always has figures to show.
+ */
+export function adoptRates({ live = null, stored = null } = {}) {
+  const chosen = pickRates({ live, stored });
+  exchangeRates.set(chosen);
+  return chosen;
+}
+
+/**
+ * Adopt whatever rates are available now and, if they are stale and the device is
+ * online, refresh in the background.
+ *
+ * Deliberately never awaited as part of boot: the first render must not wait on a
+ * third party, and a failed fetch leaves the previous snapshot in place, so the
+ * app behaves identically online and offline apart from the rates it shows.
+ */
+export async function refreshRates({ quotes = Object.keys(RATES), fetchImpl } = {}) {
+  const stored = normaliseSnapshot(await readSetting('exchangeRates', null));
+  adoptRates({ stored });
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return get(exchangeRates);
+  if (!isStale(stored)) return get(exchangeRates);
+  const live = await fetchLiveRates({ base: 'USD', quotes, fetchImpl });
+  if (live) {
+    adoptRates({ live, stored });
+    // Best effort: a failure here must not affect anything but the rate table.
+    writeSetting('exchangeRates', live).catch(() => {});
+  }
+  return get(exchangeRates);
+}
 export function money(value, currency = 'USD') {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return `${currency} 0.00`;
@@ -512,6 +545,10 @@ export async function initStores() {
   setRemoteAppliedHandler(async () => {
     hydrate(await loadAll());
   });
+  // Rates are adopted from storage first so the first render has real figures, and
+  // the network refresh is left in the background: boot must never wait on a
+  // third party, and a failure here changes nothing but the rate table.
+  await refreshRates();
   await refreshSyncStatus();
   return { migrated };
 }

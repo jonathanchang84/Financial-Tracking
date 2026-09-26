@@ -1,4 +1,5 @@
 import { base64UrlToBytes, sha256, publicUser, randomToken } from './crypto.js';
+import { limitFor } from './limits.js';
 
 export const SESSION_COOKIE = 'fh_session';
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -196,6 +197,12 @@ function rateLimitAllowlist(env) {
 }
 
 export async function rateLimit(env, request, bucket, limit, windowSeconds) {
+  // The policy comes from the table in `limits.js` so call sites name only the
+  // route. Passing the numbers explicitly still works and is what the unit tests
+  // do, so both forms stay available.
+  const policy = limitFor(bucket);
+  const max = limit ?? policy.attempts;
+  const window = windowSeconds ?? policy.windowSeconds;
   // The owner's own connection is exempt so a flaky line, a proxy retry loop, or
   // a scripted run can never lock them out of their own app. The address must be
   // Cloudflare-verified, so a forged X-Forwarded-For cannot claim the exemption.
@@ -206,7 +213,7 @@ export async function rateLimit(env, request, bucket, limit, windowSeconds) {
   try {
     const id = env.AUTH_RATE_LIMITER.idFromName(key);
     const response = await env.AUTH_RATE_LIMITER.get(id).fetch('https://rate-limit.internal/', {
-      method: 'POST', body: JSON.stringify({ key, limit, windowSeconds })
+      method: 'POST', body: JSON.stringify({ key, limit: max, windowSeconds: window })
     });
     const result = await response.json();
     if (!result.allowed) {

@@ -155,7 +155,7 @@ export async function handleAuth(request, env, path) {
   }
 
   if (path === 'signup' && request.method === 'POST') {
-    await rateLimit(env, request, 'signup', 20, 3600);
+    await rateLimit(env, request, 'signup');
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!isValidEmail(email)) throw new AppError('Enter a valid email address.', 400, 'invalid_email');
@@ -189,7 +189,7 @@ export async function handleAuth(request, env, path) {
   }
 
   if (path === 'signin' && request.method === 'POST') {
-    await rateLimit(env, request, 'signin', 10, 900);
+    await rateLimit(env, request, 'signin');
     const body = await readJson(request);
     const user = await findUserByEmail(env, normalizeEmail(body.email));
     const candidate = String(body.password || '');
@@ -215,14 +215,14 @@ export async function handleAuth(request, env, path) {
   // answer instead. The browser derives the digest locally and only the digest
   // ever reaches the Worker.
   if (path === 'recovery-questions' && request.method === 'POST') {
-    await rateLimit(env, request, 'recovery-questions', 10, 900);
+    await rateLimit(env, request, 'recovery-questions');
     const body = await readJson(request);
     const questions = await recoveryQuestions(env, normalizeEmail(body.email));
     return json({ questions });
   }
 
   if (path === 'recover' && request.method === 'POST') {
-    await rateLimit(env, request, 'recover', 10, 900);
+    await rateLimit(env, request, 'recover');
     const body = await readJson(request);
     const user = await findUserByEmail(env, normalizeEmail(body.email));
     // Run a real comparison even when there is no account, so an attacker
@@ -242,7 +242,7 @@ export async function handleAuth(request, env, path) {
   }
 
   if (path === 'reset-password' && request.method === 'POST') {
-    await rateLimit(env, request, 'reset-password', 10, 900);
+    await rateLimit(env, request, 'reset-password');
     const body = await readJson(request);
     const row = assertUsableToken(await findToken(env, body.token));
     await replacePassword(env, row.user_id, validatedPassword(body.password));
@@ -252,7 +252,7 @@ export async function handleAuth(request, env, path) {
 
   if (path === 'change-password' && request.method === 'POST') {
     const { user, tokenHash } = await requireUser(request, env);
-    await rateLimit(env, request, 'change-password', 10, 900);
+    await rateLimit(env, request, 'change-password');
     const body = await readJson(request);
     const row = await findUserByEmail(env, user.email);
     if (!row || !await verifyPassword(String(body.currentPassword || ''), row, { pepper: passwordPepper(env) })) {
@@ -271,7 +271,7 @@ export async function handleAuth(request, env, path) {
 
   if (path === 'change-email' && request.method === 'POST') {
     const { user, tokenHash } = await requireUser(request, env);
-    await rateLimit(env, request, 'email-change', 10, 900);
+    await rateLimit(env, request, 'email-change');
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     if (!isValidEmail(email)) throw new AppError('Enter a valid email address.', 400, 'invalid_email');
