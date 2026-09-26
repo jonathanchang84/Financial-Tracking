@@ -78,6 +78,8 @@ export async function startLocalWorker({ port = 8788, source = 'the test suite' 
 
   return {
     origin,
+    /** Everything the Worker has written so far, for diagnosing a boot failure. */
+    log,
     stop() {
       devProcess.kill('SIGTERM');
       // A leftover .dev.vars would shadow the developer's real secrets.

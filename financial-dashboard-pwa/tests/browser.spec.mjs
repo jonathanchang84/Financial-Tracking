@@ -46,6 +46,10 @@ test.before(async () => {
 test.after(async () => {
   await browser?.close();
   worker?.stop();
+  // The Worker log is the fastest way to tell a boot failure from an assertion
+  // failure, and `validate` gives it to nobody on a CI failure. Echoed to stdout
+  // so it lands in the step output, which is readable without log access.
+  if (process.env.CI && worker?.log) console.log(`\nworker log (tail):\n${worker.log.slice(-2000)}`);
 });
 
 /**
