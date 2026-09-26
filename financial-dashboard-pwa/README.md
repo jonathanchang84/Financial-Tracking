@@ -49,13 +49,32 @@ provider of any kind.
 
 ```bash
 npm install
+npm run setup           # one-off: download Chromium for the browser tests
 npm run dev
 npm run build
 npm run test            # unit tests
 npm run test:functional # real end-to-end sign-up / sign-in / recovery
-npm run validate        # unit tests + build + functional test
+npm run test:browser    # browser smoke tests: renders, metrics, sign-in round trip
+npm run validate        # everything above except the browser needs `npm run setup` first
 npm run deploy          # validate, then wrangler deploy
+npm run checkpoint      # commit the working tree in one deliberate step
 ```
+
+### Testing
+
+`npm run test` is deliberately dependency-free (`node --test`) and runs in under a second, which is
+what makes it cheap enough to sit in a pre-commit hook. It covers the pure logic only.
+
+Two heavier suites cover what unit tests cannot, both against a real local Worker and D1:
+
+- `npm run test:functional` — the API contract: sign-up, sign-in, recovery, sync.
+- `npm run test:browser` — Playwright, driving a real browser so IndexedDB, fetch and the service
+  worker are exercised. Requires `npm run setup` once, because the ~300 MB Chromium download is not
+  part of `npm install`.
+
+CI runs `npm run validate` before deploying, so the shipped build has passed the same gate as a local
+one. A tracked pre-commit hook runs the fast unit suite; the full gate is CI's job, because a hook
+slow enough to notice gets bypassed.
 
 ## Architecture
 

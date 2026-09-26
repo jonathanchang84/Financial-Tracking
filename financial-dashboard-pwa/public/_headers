@@ -4,7 +4,17 @@
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(), microphone=(), camera=()
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'
+
+  # `connect-src` is https: rather than 'self' for two reasons, and pinning it to
+  # specific hosts would break one of them:
+  #   1. the app documents a separate API origin (VITE_API_URL), which is a
+  #      build-time value this static file cannot know;
+  #   2. exchange rates are fetched from the provider.
+  # It stays https-only so nothing can be downgraded to cleartext. A build step
+  # that injects the configured API origin would allow a tighter policy, and the
+  # only third party would then be the rate provider.
 
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate

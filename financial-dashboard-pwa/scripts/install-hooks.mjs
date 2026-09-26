@@ -8,6 +8,10 @@
  * The path is resolved from the git top level, not the package directory, so it
  * has to be written relative to that. This runs from `npm install` via the
  * `prepare` script, which is also what makes it automatic on a new clone.
+ *
+ * The browser download is deliberately left to an explicit `npm run setup`:
+ * `prepare` runs on every `npm ci`, including in CI, and a ~300 MB download
+ * there would be surprising and slow.
  */
 import { execFileSync } from 'node:child_process';
 import { chmodSync } from 'node:fs';

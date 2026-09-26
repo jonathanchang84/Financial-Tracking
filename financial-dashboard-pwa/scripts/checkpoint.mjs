@@ -7,7 +7,6 @@
  * is taken when a unit of work actually works.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -46,7 +45,10 @@ console.log(`\nCommitted: ${message}`);
 console.log(`Short SHA: ${git(['rev-parse', '--short', 'HEAD'])}`);
 
 // A push is the real offsite backup, so say so when there is something unpushed.
+// `ahead` arrives as a string, and the string "0" is truthy, so it has to be
+// compared as a number or a fully pushed branch still claims there is something
+// to push.
 const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], true);
-const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], true);
-if (branch && ahead) console.log(`${ahead} commit(s) ahead of origin/${branch} — run \`git push\` to back it up.`);
+const ahead = Number(git(['rev-list', '--count', '@{upstream}..HEAD'], true)) || 0;
+if (branch && ahead > 0) console.log(`${ahead} commit(s) ahead of origin/${branch} — run \`git push\` to back it up.`);
 
