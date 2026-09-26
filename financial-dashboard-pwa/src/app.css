@@ -93,6 +93,7 @@ small { color: var(--muted); }
   .rate-note { display: none; }
 }
 
+.sync-pill {
   font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 4px 10px; background: var(--panel); white-space: nowrap;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis;

@@ -43,7 +43,24 @@ jobs:
         # This workflow used to build and deploy with no tests at all, so a failing
         # suite could still reach production. Keeping CI and local identical means
         # "it passed on my machine" and "it passed in CI" cannot diverge.
-      - run: npm run validate
+        #
+        # The four gate steps are separate on purpose. Run as one `validate` step,
+        # a failure only says "validate failed" and the individual logs need
+        # authentication to read; split out, the step name says which gate broke
+        # and the output is on the run summary. `npm run validate` still runs the
+        # same four in the same order, so local and CI stay equivalent.
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Functional tests (local Worker + D1)
+        run: npm run test:functional
+      - name: Browser smoke tests
+        run: npm run test:browser
+        env:
+          # Must match the install step above, or the test process looks for the
+          # browser in the default location and cannot find it.
+          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

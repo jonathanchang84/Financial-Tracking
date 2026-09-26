@@ -27,8 +27,20 @@ let worker = null;
 let browser = null;
 
 test.before(async () => {
-  worker = await startLocalWorker({ port, source: 'tests/browser.test.js' });
-  browser = await chromium.launch();
+  worker = await startLocalWorker({ port, source: 'tests/browser.spec.mjs' });
+  // `chromium.launch()` throws an opaque "Executable doesn't exist" when the
+  // browser was installed to a non-default location, which is exactly what a CI
+  // cache path does. Say so plainly, because a bare Playwright stack trace three
+  // frames deep is not a diagnosable failure.
+  try {
+    browser = await chromium.launch();
+  } catch (error) {
+    throw new Error(
+      'Chromium could not be launched. Run `npm run setup` to install it, or set ' +
+        'PLAYWRIGHT_BROWSERS_PATH to the directory `npx playwright install` wrote to. ' +
+        `Underlying error: ${error.message}`
+    );
+  }
 });
 
 test.after(async () => {
