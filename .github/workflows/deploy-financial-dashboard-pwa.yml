@@ -80,7 +80,36 @@ jobs:
             echo "## Gate failed" >> "$GITHUB_STEP_SUMMARY"
             echo "See the error annotations on this run for the failing check." >> "$GITHUB_STEP_SUMMARY"
           fi
+      # An unset secret arrives as an empty string, and wrangler's own error for
+      # that is a 401 from the API with no mention of the missing variable. The
+      # gate above this step already passed, so a failure here is authentication
+      # and nothing else; saying which variable is missing turns a puzzle into
+      # a one-line fix in repository settings.
+      #
+      # The token also needs the Account - Workers Scripts and D1 edit
+      # permissions, or the deploy fails after authentication succeeds.
+      #
+      # The two secrets live under Settings > Secrets and variables > Actions.
       - run: npx wrangler deploy
+        id: deployCheck
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Runs only when the deploy above failed, and separates the two reasons a
+      # token can be rejected. An unset secret arrives as an empty string and
+      # wrangler reports a bare 401 with no mention of the missing variable; both
+      # variables being present instead points at the token's permissions. Without
+      # this the failure is a 401 and nothing else.
+      - name: Explain a failed deploy
+        if: failure() && steps.deployCheck.outcome == 'failure'
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error title=Missing secret::CLOUDFLARE_API_TOKEN is not set in this repository. Add it under Settings > Secrets and variables > Actions."
+          elif [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error title=Missing secret::CLOUDFLARE_ACCOUNT_ID is not set. The value is 9acdcec8241759d3107256fca80447d4, and is now also in wrangler.toml."
+          else
+            echo "::error title=Credentials present but the deploy still failed::The token is most likely missing the Account - Workers Scripts and D1 edit permissions."
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
