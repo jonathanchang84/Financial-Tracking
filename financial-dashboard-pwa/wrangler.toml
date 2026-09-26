@@ -2,6 +2,12 @@
 name = "financial-tracking"
 main = "worker/index.js"
 compatibility_date = "2025-01-01"
+# Not a secret: an account id appears in every wrangler command and in the
+# dashboard URL. It lives here rather than only in CI because deploying locally
+# otherwise depends on being OAuth-logged-in, while CI authenticates with an API
+# token, which carries no account of its own. Without it, `wrangler deploy` in CI
+# cannot tell which account to deploy to.
+account_id = "9acdcec8241759d3107256fca80447d4"
 
 [assets]
 directory = "./dist"
