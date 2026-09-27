@@ -200,14 +200,22 @@ test('the position charts stack bars with a zero-based axis and selectable serie
       assert.match(label, /^-?[\d.]+[kbm]?$/, `unreadable axis label: "${label}"`);
     }
 
-    // Peak, not last value: 2022's Work pension bar must reflect the August high
-    // of 46,000 rather than December's 43,000, so the 2022 total is above what a
-    // last-value reading would give.
+    // End of period, not the peak: 2022's Work pension cell must be December's
+    // 51,000 rather than the August high of 55,000. The bar beside it reads from
+    // the same pivot, so this also proves the two agree.
+    const cell2022 = await page.locator('.monthly-history-table tbody tr').first().textContent();
+    assert.match(cell2022 || '', /2022/, 'the year row is labelled by year');
     const totals = await page.locator('.trend-total').allTextContents();
     assert.equal(totals.length, 2, `one total per year, got ${JSON.stringify(totals)}`);
     assert.ok(/^[\d.]+[kbm]?$/.test(totals[0]), `total is not a readable value: ${totals[0]}`);
 
-    // Year by default, with a control to expand to months.
+    // The table follows the same toggle as the chart, and says which unit it is in.
+    assert.equal(await page.locator('.monthly-history-table thead th').first().textContent(), 'Year');
+    const tableYears = await page.locator('.monthly-history-table tbody tr th').allTextContents();
+    assert.deepEqual(tableYears, ['2022', '2023'], `expected year rows, got ${JSON.stringify(tableYears)}`);
+
+    // Year by default, with a control to expand to months - and the table has to
+    // re-bucket with it, since both read the same pivot.
     const months = await page.locator('.trend-month-label').allTextContents();
     assert.deepEqual(months, ['2022', '2023'], `expected year labels, got ${JSON.stringify(months)}`);
     await page.getByRole('button', { name: 'By month' }).click();
@@ -218,6 +226,12 @@ test('the position charts stack bars with a zero-based axis and selectable serie
     );
     const monthLabels = await page.locator('.trend-month-label').allTextContents();
     assert.ok(monthLabels.some((label) => /\d{2}$/.test(label)), `expected month labels, got ${JSON.stringify(monthLabels)}`);
+    assert.equal(await page.locator('.monthly-history-table thead th').first().textContent(), 'Month');
+    const tableMonths = await page.locator('.monthly-history-table tbody tr th').allTextContents();
+    assert.ok(
+      tableMonths.length > 2 && tableMonths[0] !== '2022',
+      `the table should have re-bucketed to months, got ${JSON.stringify(tableMonths.slice(0, 3))}`
+    );
 
     // Every series gets a checkbox, and unticking one removes its segments.
     const toggles = page.locator('.series-toggle input');

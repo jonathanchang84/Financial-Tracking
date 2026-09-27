@@ -114,37 +114,11 @@ export function formatAxisValue(value, { compact = true, fractionDigits = 1 } = 
   return `${Number(scaled.toFixed(digits))}${unit.suffix}`;
 }
 
-/**
- * Split a series into contiguous runs so a missing value breaks the line.
- *
- * The monthly history table deliberately fills gaps between recorded months with
- * `null`. Drawing a line through those would show a value of zero for a pension
- * that did not exist yet, which is not a rounding difference but a false
- * statement about the data. Each run is drawn as its own polyline.
- */
-export function splitIntoRuns(points) {
-  const runs = [];
-  let current = [];
-  for (const point of points || []) {
-    const value = point?.value;
-    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-      if (current.length) runs.push(current);
-      current = [];
-      continue;
-    }
-    current.push({ ...point, value: Number(value) });
-  }
-  if (current.length) runs.push(current);
-  return runs;
-}
-
 /* ---------------------------------------------------------------------------
  * Bucketing and stacking.
  *
- * The bar chart shows the PEAK value reached in each year or month, not the
- * value at the end of it. That is a deliberate difference from the table below,
- * which shows the last value recorded in a month - so the chart is labelled to
- * say which it is showing.
+ * Buckets come from the shared history pivot, so the chart and the table beneath
+ * it always show the same figures.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -177,31 +151,6 @@ export function bucketLabel(key, granularity = 'year') {
   if (!year || !month) return String(key);
   const when = new Date(year, month - 1, 1);
   return Number.isNaN(when.getTime()) ? String(key) : when.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
-}
-
-/**
- * Peak value per bucket for one series, with the date it was reached.
- *
- * The date matters: a stacked peak combines each pot's high-water mark, and
- * those peaks rarely happened on the same day, so the tooltip has to be able to
- * say when this one was set rather than implying simultaneity.
- *
- * Ties keep the earliest date, so re-rendering cannot shuffle which date is
- * shown for a value that did not change.
- */
-export function peakByBucket(points, granularity = 'year') {
-  const peaks = new Map();
-  for (const point of points || []) {
-    const key = bucketKey(point?.date, granularity);
-    const value = Number(point?.value);
-    if (!key || point?.value === null || point?.value === undefined) continue;
-    if (!Number.isFinite(value)) continue;
-    const existing = peaks.get(key);
-    if (!existing || value > existing.value) {
-      peaks.set(key, { value, date: String(point.date).slice(0, 10) });
-    }
-  }
-  return peaks;
 }
 
 /** Every bucket between the first and last, so gaps leave an empty slot. */
@@ -240,11 +189,18 @@ export function stackSegments({ series = [], buckets = [] } = {}) {
     let base = 0;
     let total = 0;
     for (const line of series) {
-      const value = Number(line?.peaks?.get?.(bucket)?.value);
-      if (!Number.isFinite(value)) continue;
-      segments.push({ key: line.key, color: line.color, value, from: base, to: base + value });
-      base += value;
-      total += value;
+      const cell = line?.values?.get?.(bucket);
+      const value = cell?.value;
+      // Guarded before Number(), not after. `Number(null)` is 0 and
+      // `Number(undefined)` is NaN, so a `Number.isFinite` check alone would
+      // read a missing figure as zero and draw a zero-height segment - which
+      // says "this was worth nothing" rather than "we have no record".
+      if (value === null || value === undefined) continue;
+      const amount = Number(value);
+      if (!Number.isFinite(amount)) continue;
+      segments.push({ key: line.key, color: line.color, value: amount, from: base, to: base + amount });
+      base += amount;
+      total += amount;
     }
     return { bucket, segments, total };
   });

@@ -10,10 +10,29 @@ import {
   maxStackTotal,
   niceScale,
   niceStep,
-  peakByBucket,
-  splitIntoRuns,
   stackSegments
 } from '../src/services/chartScale.js';
+import { buildMonthlyHistoryTable } from '../src/services/monthlyHistory.js';
+
+/**
+ * A closing-value map, as the shared pivot hands the chart one per series.
+ * Built from real snapshots rather than by hand, so the tests exercise the same
+ * path the app does instead of a stand-in.
+ */
+function closingValues(rows, granularity = 'year') {
+  const table = buildMonthlyHistoryTable({ rows, granularity });
+  return new Map(
+    (table.columns || []).map((column) => [
+      column.key,
+      new Map(
+        table.rows.map((row) => [
+          row.bucket,
+          { value: row.cells?.[column.key]?.value ?? null, date: row.cells?.[column.key]?.date ?? null }
+        ])
+      )
+    ])
+  );
+}
 
 test('tick steps round up to 1, 2, 5 or 10 times a power of ten', () => {
   // This is what makes an axis read 10k / 20k / 30k rather than 10,237 / 20,473.
@@ -96,72 +115,36 @@ test('axis labels are compact and drop a pointless decimal', () => {
   assert.equal(formatAxisValue(12_400, { compact: false }), '12400');
 });
 
-test('a missing month breaks the line rather than dropping to zero', () => {
-  // The monthly table fills unrecorded months with null. Joining across one
-  // would assert a pension was worth nothing, which is a different statement.
-  const points = [
-    { month: '2024-01', value: 100 },
-    { month: '2024-02', value: 110 },
-    { month: '2024-03', value: null },
-    { month: '2024-04', value: null },
-    { month: '2024-05', value: 130 }
-  ];
-  const runs = splitIntoRuns(points);
-  assert.equal(runs.length, 2, 'the gap should split the series in two');
-  assert.deepEqual(runs[0].map((point) => point.month), ['2024-01', '2024-02']);
-  assert.deepEqual(runs[1].map((point) => point.month), ['2024-05']);
-  // No run may contain the gap, and no value may be coerced to 0.
-  for (const run of runs) {
-    for (const point of run) {
-      assert.ok(Number.isFinite(point.value) && point.value > 0, 'a gap became a number');
-    }
-  }
-});
 
-test('a bucket keeps the peak reached in it, not the last value', () => {
-  // The 2024 bar is the highest the pot was during 2024, not what it happened
-  // to be worth on 31 December.
-  const points = [
-    { date: '2024-01-15', value: 10_000 },
-    { date: '2024-03-15', value: 30_000 },
-    { date: '2024-11-15', value: 22_000 },
-    { date: '2024-12-31', value: 24_000 }
-  ];
-  const year = peakByBucket(points, 'year');
-  assert.equal(year.get('2024').value, 30_000, 'the March peak, not the December value');
-  assert.equal(year.get('2024').date, '2024-03-15', 'and the date it was reached');
 
-  const month = peakByBucket(points, 'month');
-  assert.equal(month.get('2024-03').value, 30_000);
-  assert.equal(month.get('2024-12').value, 24_000);
-  assert.equal(month.size, 4);
-});
 
-test('a tied peak keeps the earliest date, so a re-render cannot shuffle it', () => {
-  const peaks = peakByBucket(
-    [{ date: '2024-02-01', value: 5000 }, { date: '2024-05-01', value: 5000 }],
-    'year'
-  );
-  assert.equal(peaks.get('2024').value, 5000);
-  assert.equal(peaks.get('2024').date, '2024-02-01', 'the first occurrence of the maximum');
-});
-
-test('missing and unusable values never become a peak or a zero', () => {
-  const peaks = peakByBucket(
-    [
-      { date: '2024-01-01', value: null },
-      { date: '2024-02-01', value: undefined },
-      { date: '2024-03-01', value: 'nonsense' },
-      { date: 'not-a-date', value: 99_000 },
-      { date: '2024-04-01', value: 1200 }
+test('missing and unusable values never become a figure or a zero', () => {
+  // The pivot has to drop these rather than coerce them: a null read as 0 would
+  // put a zero-height segment in the stack, and an undated row would create a
+  // bucket that looks real.
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { series: 'a', date: '2024-01-01', value: null, currencyCode: 'USD' },
+      { series: 'a', date: '2024-02-01', value: undefined, currencyCode: 'USD' },
+      { series: 'a', date: '2024-03-01', value: 'nonsense', currencyCode: 'USD' },
+      { series: 'a', date: 'not-a-date', value: 99_000, currencyCode: 'USD' },
+      { series: 'a', date: '2024-04-01', value: 1200, currencyCode: 'USD' }
     ],
-    'year'
-  );
-  // A null must not be read as 0, which would set a floor, nor as a peak.
-  assert.equal(peaks.get('2024').value, 1200);
-  assert.equal(peaks.get('2024').date, '2024-04-01');
-  assert.equal(peaks.size, 1, 'the undated row contributed nothing');
-  assert.equal(peakByBucket([], 'year').size, 0);
+    granularity: 'year'
+  });
+  assert.equal(table.rows.length, 1, 'only the one usable bucket survives');
+  assert.equal(table.rows[0].bucket, '2024');
+  assert.equal(table.rows[0].cells['a::USD'].value, 1200, 'not coerced to 0');
+  assert.equal(table.rows[0].cells['a::USD'].date, '2024-04-01');
+
+  // No usable rows at all yields an empty pivot rather than throwing.
+  const empty = buildMonthlyHistoryTable({
+    rows: [{ series: 'a', date: 'nonsense', value: 1, currencyCode: 'USD' }],
+    granularity: 'year'
+  });
+  assert.deepEqual(empty.buckets, []);
+  assert.deepEqual(empty.columns, []);
+  assert.deepEqual(empty.rows, []);
 });
 
 test('bucket keys and labels work at both granularities', () => {
@@ -191,10 +174,17 @@ test('the bucket range fills the gap so spacing stays even', () => {
 });
 
 test('segments stack upward and a missing series is skipped, not zeroed', () => {
+  // "c" has only a 2023 snapshot, so it must contribute no 2024 segment rather
+  // than a zero-height one that would read as "it was worth nothing".
+  const bySeries = closingValues([
+    { series: 'a', date: '2024-01-01', value: 300, currencyCode: 'USD' },
+    { series: 'b', date: '2024-02-01', value: 200, currencyCode: 'USD' },
+    { series: 'c', date: '2023-01-01', value: 999, currencyCode: 'USD' }
+  ]);
   const series = [
-    { key: 'a', color: '#1', peaks: peakByBucket([{ date: '2024-01-01', value: 300 }], 'year') },
-    { key: 'b', color: '#2', peaks: peakByBucket([{ date: '2024-02-01', value: 200 }], 'year') },
-    { key: 'c', color: '#3', peaks: peakByBucket([{ date: '2023-01-01', value: 999 }], 'year') }
+    { key: 'a::USD', color: '#1', values: bySeries.get('a::USD') },
+    { key: 'b::USD', color: '#2', values: bySeries.get('b::USD') },
+    { key: 'c::USD', color: '#3', values: bySeries.get('c::USD') }
   ];
   const [stack] = stackSegments({ series, buckets: ['2024'] });
   assert.equal(stack.total, 500, 'c had no 2024 figure, so it is absent rather than zero');
@@ -231,12 +221,16 @@ test('a bar axis starts at zero, so no segment is drawn off the plot', () => {
 });
 
 test('the axis is scaled from stacked totals, so a tall stack is not clipped', () => {
-  // The trap this whole module exists for: peaks of 300 and 200 draw a 500 bar,
-  // but a scale built from the largest individual value tops out near 300 and
-  // silently cuts the bar in half. Nothing errors; the number is just wrong.
+  // The trap this whole module exists for: 300 and 200 draw a 500 bar, but a
+  // scale built from the largest individual value tops out near 300 and silently
+  // cuts the bar in half. Nothing errors; the number is just wrong.
+  const bySeries = closingValues([
+    { series: 'a', date: '2024-01-01', value: 300, currencyCode: 'USD' },
+    { series: 'b', date: '2024-01-01', value: 200, currencyCode: 'USD' }
+  ]);
   const series = [
-    { key: 'a', peaks: peakByBucket([{ date: '2024-01-01', value: 300 }], 'year') },
-    { key: 'b', peaks: peakByBucket([{ date: '2024-01-01', value: 200 }], 'year') }
+    { key: 'a::USD', values: bySeries.get('a::USD') },
+    { key: 'b::USD', values: bySeries.get('b::USD') }
   ];
   const stacks = stackSegments({ series, buckets: ['2024'] });
   const tallest = maxStackTotal(stacks);
@@ -252,7 +246,8 @@ test('the axis is scaled from stacked totals, so a tall stack is not clipped', (
 });
 
 test('a bucket where every series is missing produces no segments at all', () => {
-  const series = [{ key: 'a', peaks: peakByBucket([{ date: '2024-01-01', value: 100 }], 'year') }];
+  const bySeries = closingValues([{ series: 'a', date: '2024-01-01', value: 100, currencyCode: 'USD' }]);
+  const series = [{ key: 'a::USD', values: bySeries.get('a::USD') }];
   const stacks = stackSegments({ series, buckets: ['2024', '2025'] });
   assert.equal(stacks.length, 2, 'the empty bucket still holds its slot');
   assert.equal(stacks[1].segments.length, 0);
@@ -277,12 +272,3 @@ test('x-axis labels thin out instead of colliding', () => {
   }
 });
 
-test('a series with no gaps is one run, and leading and trailing gaps are handled', () => {
-  assert.equal(splitIntoRuns([{ value: 1 }, { value: 2 }]).length, 1);
-  const trailing = splitIntoRuns([{ value: 1 }, { value: null }]);
-  assert.equal(trailing.length, 1, 'a trailing gap must not create an empty run');
-  const leading = splitIntoRuns([{ value: null }, { value: 1 }]);
-  assert.equal(leading.length, 1);
-  assert.deepEqual(splitIntoRuns([]), []);
-  assert.deepEqual(splitIntoRuns([{ value: null }]), [], 'all-gap input draws nothing');
-});

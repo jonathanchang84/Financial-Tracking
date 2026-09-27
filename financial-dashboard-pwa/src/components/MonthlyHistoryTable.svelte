@@ -1,15 +1,18 @@
 <script>
-  /** Month-by-item value table with a paired month-over-month change column. */
+  /** Bucket-by-item value table with a paired period-over-period change column. */
   import { displayCurrency, money } from '../stores/finance.js';
 
   let {
-    table = { months: [], columns: [], rows: [] },
+    table = { columns: [], rows: [], granularity: 'month' },
     emptyMessage = 'Record dated snapshots to see the monthly comparison.'
   } = $props();
 
-  const monthLabel = (month) => {
-    const [year, number] = month.split('-').map(Number);
-    return new Date(year, number - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  // A bucket is either '2024' or '2024-06' depending on the shared toggle, so the
+  // header has to follow it rather than assuming months.
+  const bucketLabel = (bucket) => {
+    if (table.granularity === 'year') return String(bucket);
+    const [year, month] = String(bucket).split('-').map(Number);
+    return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
   };
   const valueLabel = (value) => value === null ? '—' : money(value, $displayCurrency);
   const changeLabel = (change) => change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
@@ -25,10 +28,10 @@
           <col class="history-change" />
         {/each}
       </colgroup>
-      <caption>Monthly item values. Each cell shows the last value recorded in that month.</caption>
+      <caption>Item values by {table.granularity}. Each cell shows the last value recorded in that {table.granularity}.</caption>
       <thead>
         <tr>
-          <th scope="col" class="text-cell">Month</th>
+          <th scope="col" class="text-cell">{table.granularity === 'year' ? 'Year' : 'Month'}</th>
           {#each table.columns as column (column.key)}
             <th scope="col" class="text-cell" title={`${column.name} (${column.currency})`}>{column.name}<small>{column.currency}</small></th>
             <th scope="col">% change</th>
@@ -36,9 +39,9 @@
         </tr>
       </thead>
       <tbody>
-        {#each table.rows as row (row.month)}
+        {#each table.rows as row (row.bucket)}
           <tr>
-            <th scope="row" class="text-cell">{monthLabel(row.month)}</th>
+            <th scope="row" class="text-cell">{bucketLabel(row.bucket)}</th>
             {#each table.columns as column (column.key)}
               {@const cell = row.cells[column.key]}
               <td class="value-cell">{valueLabel(cell?.value)}</td>

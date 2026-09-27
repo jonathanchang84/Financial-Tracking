@@ -218,7 +218,8 @@ test('monthly history uses the last snapshot in each month and keeps missing mon
       { series: 'Savings 2', date: '2026-03-31', value: 0, currencyCode: 'USD' }
     ]
   });
-  assert.deepEqual(table.months, ['2026-01', '2026-02', '2026-03']);
+  assert.deepEqual(table.buckets, ['2026-01', '2026-02', '2026-03']);
+  assert.equal(table.granularity, 'month');
   assert.equal(table.columns.length, 2);
   assert.equal(table.rows[0].cells['Savings 1::USD'].value, 120);
   assert.equal(table.rows[0].cells['Savings 1::USD'].change, null);
@@ -226,8 +227,34 @@ test('monthly history uses the last snapshot in each month and keeps missing mon
   assert.equal(table.rows[1].cells['Savings 1::USD'].change, null);
   assert.equal(table.rows[2].cells['Savings 1::USD'].value, 144);
   assert.equal(table.rows[2].cells['Savings 1::USD'].change, null);
+  // A real zero is a figure, not a gap: null is reserved for "no record".
   assert.equal(table.rows[2].cells['Savings 2::USD'].value, 0);
   assert.equal(table.rows[2].cells['Savings 2::USD'].change, null);
+  // The closing snapshot's date travels with the cell so the chart can name it.
+  assert.equal(table.rows[0].cells['Savings 1::USD'].date, '2026-01-25');
+  assert.equal(table.rows[1].cells['Savings 1::USD'].date, null);
+});
+
+test('yearly history buckets by year and takes the last snapshot in the year', () => {
+  // The same pivot, a coarser bucket, so the chart and the table can share it and
+  // still say "end of the year" rather than "end of March".
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { series: 'Pension', date: '2024-03-15', value: 10_000, currencyCode: 'USD' },
+      { series: 'Pension', date: '2024-08-15', value: 12_000, currencyCode: 'USD' },
+      { series: 'Pension', date: '2024-12-20', value: 11_000, currencyCode: 'USD' },
+      { series: 'Pension', date: '2025-06-10', value: 13_000, currencyCode: 'USD' }
+    ],
+    granularity: 'year'
+  });
+  assert.equal(table.granularity, 'year');
+  assert.deepEqual(table.buckets, ['2024', '2025']);
+  // December's 11,000, not the August peak of 12,000.
+  assert.equal(table.rows[0].cells['Pension::USD'].value, 11_000);
+  assert.equal(table.rows[0].cells['Pension::USD'].date, '2024-12-20');
+  assert.equal(table.rows[1].cells['Pension::USD'].value, 13_000);
+  // Change is measured against the previous bucket, which is a year here.
+  assert.equal(table.rows[1].cells['Pension::USD'].change, (13000 - 11000) / 11000 * 100);
 });
 
 test('monthly history calculates adjacent month change and separates currencies', () => {
@@ -249,7 +276,7 @@ test('monthly history calculates adjacent month change and separates currencies'
 
 test('monthly history returns an empty shape without valid dated snapshots', () => {
   assert.deepEqual(buildMonthlyHistoryTable({ rows: [{ series: 'Missing date' }] }), {
-    months: [], columns: [], rows: []
+    buckets: [], columns: [], rows: [], granularity: 'month'
   });
 });
 

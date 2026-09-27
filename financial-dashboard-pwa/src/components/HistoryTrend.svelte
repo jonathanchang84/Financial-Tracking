@@ -8,14 +8,13 @@
    *
    * Two decisions worth knowing, because both change what a bar means:
    *
-   *   - A bar shows the PEAK value reached in that year or month, not the value
-   *     at the end of it. The monthly table below shows the end-of-month figure,
-   *     so the panel says which this is rather than leaving the two to disagree
-   *     quietly.
-   *   - Stacking peaks combines each series' high-water mark, and those peaks
-   *     rarely happened on the same day. Segment tooltips carry the date each
-   *     peak was reached, and the caption says so, so the total is not read as a
-   *     balance that was actually held.
+   *   - A bar shows the value at the END of that year or month - the last
+   *     snapshot recorded in it. It reads the same pivot the table below renders,
+   *     so the two cannot disagree. The panel says which it is showing.
+   *   - Stacking combines each series' closing value on the same date, because
+   *     every series in a bucket is taken at its own last snapshot, which is
+   *     usually the same day. The tooltip names the date per segment rather than
+   *     implying one figure for all of them.
    *
    * A series with no figure for a bucket contributes no segment at all. Drawing
    * a zero-height one would read as "it was worth nothing" rather than "we have
@@ -25,17 +24,15 @@
   import { longLabel } from '../services/dates.js';
   import {
     bucketLabel,
-    bucketRange,
     formatAxisValue,
     labelStride,
     maxStackTotal,
     niceScale,
-    peakByBucket,
     stackSegments
   } from '../services/chartScale.js';
 
   let {
-    series = [],
+    table = { columns: [], rows: [] },
     hidden = [],
     title = 'History',
     granularity = 'year',
@@ -49,19 +46,21 @@
   const plotHeight = height - PLOT.top - PLOT.bottom;
   const SWATCHES = ['#0f766e', '#2563eb', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#65a30d', '#db2777'];
 
-  /** Every series, each with its own colour and its peak per bucket. */
+  /**
+   * The pivot is the single source of truth. Each series contributes its own
+   * closing value per bucket, straight out of the same rows the table renders.
+   */
   const allSeries = $derived(
-    series.map((item, index) => ({
-      key: item.key,
-      name: item.name,
+    (table.columns || []).map((column, index) => ({
+      key: column.key,
+      name: column.name,
       color: SWATCHES[index % SWATCHES.length],
-      points: item.points || [],
-      peaks: peakByBucket(item.points || [], granularity)
+      values: new Map((table.rows || []).map((row) => [row.bucket, row.cells?.[column.key] ?? null]))
     }))
   );
 
   const visibleSeries = $derived(allSeries.filter((line) => !hidden.includes(line.key)));
-  const buckets = $derived(bucketRange(allSeries.flatMap((line) => [...line.peaks.keys()]), granularity));
+  const buckets = $derived((table.rows || []).map((row) => row.bucket));
   const stacks = $derived(stackSegments({ series: visibleSeries, buckets }));
 
   // Scaled from the stacked totals, not the individual maxima. Scaling from the
@@ -81,7 +80,10 @@
   const fmtShort = (value) => formatAxisValue(value);
 
   const peakRange = $derived.by(() => {
-    const dates = visibleSeries.flatMap((line) => [...line.peaks.values()].map((peak) => peak.date)).sort();
+    const dates = visibleSeries
+      .flatMap((line) => [...line.values.values()].map((cell) => cell?.date))
+      .filter(Boolean)
+      .sort();
     return dates.length ? `${longLabel(dates[0])} to ${longLabel(dates.at(-1))}` : '';
   });
 
@@ -89,21 +91,18 @@
   const namesByKey = $derived(Object.fromEntries(allSeries.map((line) => [line.key, line.name])));
 
   /**
-   * Tooltip text for one stacked segment.
-   *
-   * Includes the date the peak was reached. Stacking combines high-water marks
-   * from different days, so without this the total reads as a balance that was
-   * held on a single date - which it may never have been.
+   * Tooltip text for one stacked segment, naming the date that bucket's closing
+   * value was recorded. Each series is taken at its own last snapshot, so the
+   * dates can differ within one bar and the tooltip should not imply otherwise.
    */
   function segmentLabel(bucket, segment, granularity, names) {
     const when = granularity === 'month' ? bucketLabel(bucket, 'month') : bucket;
-    const peak = allSeries.find((line) => line.key === segment.key)?.peaks?.get(bucket);
-    const name = names?.[segment.key] || segment.key;
-    return `${name} · ${when} peak${peak?.date ? ` (${longLabel(peak.date)})` : ''}`;
+    const date = visibleSeries.find((line) => line.key === segment.key)?.values?.get(bucket)?.date;
+    return `${names?.[segment.key] || segment.key} · ${when}${date ? ` (${longLabel(date)})` : ''}`;
   }
 
   const a11yLabel = $derived(
-    `Stacked bar chart of ${title.toLowerCase()} peak values by ${granularity}. ` +
+    `Stacked bar chart of ${title.toLowerCase()} at the end of each ${granularity}. ` +
       `Vertical axis from ${fmtShort(scale.min)} to ${fmtShort(scale.max)}. ` +
       `${visibleSeries.length} series shown: ${visibleSeries.map((line) => line.name).join(', ') || 'none'}.`
   );
@@ -111,14 +110,12 @@
 
 
 
-{#if buckets.length && allSeries.some((line) => line.peaks.size)}
+{#if buckets.length && allSeries.some((line) => [...line.values.values()].some((cell) => cell?.value !== null && cell?.value !== undefined))}
   <div class="trend-visual">
     <div class="trend-head">
-      <p class="eyebrow">{granularity === 'month' ? 'PEAK VALUE BY MONTH' : 'PEAK VALUE BY YEAR'}</p>
+      <p class="eyebrow">{granularity === 'month' ? 'VALUE AT END OF MONTH' : 'VALUE AT END OF YEAR'}</p>
       <p class="hint">
-        The highest value reached in each {granularity}{visibleSeries.length > 1
-          ? '. Stacked peaks may not have been held on the same date'
-          : '.'}{peakRange ? ` Span ${peakRange}.` : ''}
+        The last value recorded in each {granularity}{visibleSeries.length > 1 ? ', stacked by series' : ''}{peakRange ? `. Span ${peakRange}` : ''}.
       </p>
     </div>
 
@@ -131,7 +128,7 @@
     >
       <title>{a11yLabel}</title>
       <desc>
-        Stacked bars of {title.toLowerCase()} peak values by {granularity}, {buckets.length} bars.
+        Stacked bars of {title.toLowerCase()} at the end of each {granularity}, {buckets.length} bars.
         The vertical axis runs from {fmtShort(scale.min)} to {fmtShort(scale.max)}.
       </desc>
 

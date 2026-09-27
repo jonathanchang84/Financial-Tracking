@@ -1,10 +1,18 @@
 import { dayKey } from './dates.js';
+import { bucketRange } from './chartScale.js';
 
 /** Stable item key used by the existing name + currency series model. */
 function itemKey(row) {
   const name = String(row?.series || row?.name || row?.symbol || 'Item').trim() || 'Item';
   const currency = row?.currencyCode || row?.currency || 'USD';
   return `${name}::${currency}`;
+}
+
+/** Bucket key for a snapshot: '2024' by year, '2024-06' by month. */
+function bucketOf(row, granularity) {
+  const date = effectiveDate(row);
+  if (!date) return '';
+  return granularity === 'year' ? date.slice(0, 4) : date.slice(0, 7);
 }
 
 function numeric(value) {
@@ -16,10 +24,6 @@ function effectiveDate(row) {
   return dayKey(row?.validFrom || row?.date);
 }
 
-function monthKey(row) {
-  return effectiveDate(row).slice(0, 7);
-}
-
 function compareSnapshots(a, b) {
   const byDate = effectiveDate(a).localeCompare(effectiveDate(b));
   if (byDate) return byDate;
@@ -28,41 +32,33 @@ function compareSnapshots(a, b) {
   return String(a?.id || '').localeCompare(String(b?.id || ''));
 }
 
-function monthsBetween(first, last) {
-  const start = first.split('-').map(Number);
-  const end = last.split('-').map(Number);
-  const months = [];
-  for (let year = start[0], month = start[1]; year < end[0] || (year === end[0] && month <= end[1]);) {
-    months.push(`${year}-${String(month).padStart(2, '0')}`);
-    month += 1;
-    if (month > 12) {
-      month = 1;
-      year += 1;
-    }
-  }
-  return months;
-}
-
 /**
- * Pivot dated snapshots into a month-by-item comparison table.
- * The latest record in each month is the value shown for that item/month.
+ * Pivot dated snapshots into a bucket-by-item table.
+ *
+ * `granularity` is 'month' or 'year'. The value shown for a bucket is the LAST
+ * snapshot recorded in it, so a year column reads as the position at the end of
+ * that year - the same measure the chart draws, which is why both read from this
+ * one pivot rather than computing their own.
+ *
+ * Buckets with no snapshot stay in the output as a null cell rather than being
+ * dropped, so the chart and the table keep the same spacing.
  */
 export function buildMonthlyHistoryTable({
   rows = [],
   readValue = (row) => row?.value,
   convert = (value) => value,
-  includeMissingMonths = true
+  granularity = 'month',
+  includeMissingBuckets = true
 } = {}) {
   const valid = rows
-    .map((row) => ({ row, date: effectiveDate(row), month: monthKey(row) }))
-    .filter((item) => item.date && item.month);
-  if (!valid.length) return { months: [], columns: [], rows: [] };
+    .map((row) => ({ row, date: effectiveDate(row), bucket: bucketOf(row, granularity) }))
+    .filter((item) => item.date && item.bucket);
+  if (!valid.length) return { buckets: [], columns: [], rows: [], granularity };
 
-  const recordedMonths = [...new Set(valid.map((item) => item.month))].sort();
-  const months = includeMissingMonths ? monthsBetween(recordedMonths[0], recordedMonths.at(-1)) : recordedMonths;
+  // Latest snapshot per item per bucket wins, so the cell is the closing value.
   const latest = new Map();
   [...valid].sort((a, b) => compareSnapshots(a.row, b.row)).forEach((item) => {
-    latest.set(`${itemKey(item.row)}|${item.month}`, item.row);
+    latest.set(`${itemKey(item.row)}|${item.bucket}`, item.row);
   });
 
   const columns = Array.from(
@@ -73,25 +69,31 @@ export function buildMonthlyHistoryTable({
     }, new Map()).values()
   ).sort((a, b) => a.name.localeCompare(b.name) || a.currency.localeCompare(b.currency));
 
-  const tableRows = months.map((month) => {
+  const recorded = [...new Set(valid.map((item) => item.bucket))].sort();
+  const buckets = includeMissingBuckets ? bucketRange(recorded, granularity) : recorded;
+
+  const tableRows = buckets.map((bucket) => {
+    const index = buckets.indexOf(bucket);
     const cells = {};
     columns.forEach((column) => {
-      const current = latest.get(`${column.key}|${month}`);
-      const previous = months[months.indexOf(month) - 1]
-        ? latest.get(`${column.key}|${months[months.indexOf(month) - 1]}`)
-        : null;
+      const current = latest.get(`${column.key}|${bucket}`);
+      const previous = index > 0 ? latest.get(`${column.key}|${buckets[index - 1]}`) : null;
       const value = current ? numeric(readValue(current)) : null;
       const previousValue = previous ? numeric(readValue(previous)) : null;
-      const change = value !== null && previousValue !== null && previousValue !== 0
-        ? ((value - previousValue) / Math.abs(previousValue)) * 100
-        : null;
       cells[column.key] = {
         value: value === null ? null : convert(value, current.currencyCode || current.currency || 'USD'),
-        change
+        change:
+          value !== null && previousValue !== null && previousValue !== 0
+            ? ((value - previousValue) / Math.abs(previousValue)) * 100
+            : null,
+        // The date of the closing snapshot, so the chart tooltip can show when
+        // the bucket's figure was actually recorded.
+        date: current ? effectiveDate(current) : null
       };
     });
-    return { month, cells };
+    return { bucket, cells };
   });
 
-  return { months, columns, rows: tableRows };
+  return { buckets, columns, rows: tableRows, granularity };
 }
+

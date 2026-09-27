@@ -105,29 +105,6 @@
   const totalInDisplay = $derived(
     Object.entries(totals).reduce((sum, [code, value]) => sum + convertCurrency(value, code, $displayCurrency), 0)
   );
-  const monthlyHistory = $derived.by(() =>
-    buildMonthlyHistoryTable({
-      rows: $historyStore || [],
-      readValue: entityKey === 'netWorth' ? signedValue : (row) => num(row.value),
-      convert: (value, currency) => convertCurrency(value, currency, $displayCurrency)
-    })
-  );
-  /**
-   * Points for the chart, one per series, mirroring the table's columns.
-   * Values are already converted to the display currency by
-   * `buildMonthlyHistoryTable`, so nothing is converted twice.
-   */
-  const trendSeries = $derived(
-    monthlyHistory.columns.map((column) => ({
-      key: column.key,
-      name: column.name,
-      points: monthlyHistory.rows.map((row) => ({
-        date: `${row.month}-01`,
-        value: row.cells[column.key]?.value ?? null
-      }))
-    }))
-  );
-
   /* --- chart view options: which series are shown, and at what granularity --- */
 
   const CHART_OPTIONS_KEY = 'chartViewOptions';
@@ -138,7 +115,31 @@
   );
   // Per entityKey, so hiding a holding does not hide a pension.
   const savedForScreen = $derived(chartOptions[entityKey] || {});
+  // Read first because the pivot below buckets on it, and the toggle drives both
+  // the table and the chart.
   const granularity = $derived(savedForScreen.granularity === 'month' ? 'month' : 'year');
+
+  /**
+   * One pivot, two renderings. The chart and the table both read this, so the
+   * bar and the cell beside it are always the same number - they cannot drift
+   * apart the way a separately-computed peak would have.
+   */
+  const monthlyHistory = $derived.by(() =>
+    buildMonthlyHistoryTable({
+      rows: $historyStore || [],
+      readValue: entityKey === 'netWorth' ? signedValue : (row) => num(row.value),
+      convert: (value, currency) => convertCurrency(value, currency, $displayCurrency),
+      granularity
+    })
+  );
+
+  /**
+   * Series for the chart's visibility toggles. The values themselves come from
+   * the pivot, so this is only names and keys.
+   */
+  const trendSeries = $derived(
+    monthlyHistory.columns.map((column) => ({ key: column.key, name: column.name }))
+  );
 
   /**
    * Hidden series keys, intersected with the series that actually exist.
@@ -368,17 +369,18 @@
   <section class="panel">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">MONTHLY COMPARISON</p>
-        <h3>{entityKey === 'holdings' ? 'Portfolio value by month' : entityKey === 'pensions' ? 'Pension value by month' : 'Net worth by month'}</h3>
-        <p class="hint">Each item shows its last recorded value in the month. Percent change compares with the immediately preceding month.</p>
+        <p class="eyebrow">VALUE OVER TIME</p>
+        <h3>{entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'}</h3>
+        <p class="hint">
+          The last value recorded in each {granularity}, shown as bars and as a table. Percent change compares with
+          the preceding {granularity}.
+        </p>
       </div>
     </div>
-    <MonthlyHistoryTable
-      table={monthlyHistory}
-      emptyMessage="Record dated snapshots to see the monthly comparison."
-    />
-    <!-- One insertion covers Position, Investments and Pensions: all three render
-         this same component, parameterised by entityKey. -->
+
+    <!-- One control above both renderings, so the chart and the table are always
+         showing the same buckets. One insertion covers Position, Investments and
+         Pensions: all three render this same component, keyed by entityKey. -->
     {#if trendSeries.length}
       <div class="chart-controls">
         <div class="chart-granularity" role="group" aria-label="Chart granularity">
@@ -416,11 +418,17 @@
     {/if}
 
     <HistoryTrend
-      series={trendSeries}
+      table={monthlyHistory}
       hidden={hiddenSeries}
       granularity={granularity}
       title={entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'}
       emptyMessage="Record dated snapshots to see growth over time."
+    />
+
+    <!-- The same pivot the chart just drew, so a bar and its row are one number. -->
+    <MonthlyHistoryTable
+      table={monthlyHistory}
+      emptyMessage="Record dated snapshots to see the comparison."
     />
   </section>
 
