@@ -128,6 +128,96 @@ test('the app boots and every screen renders without a console error', async () 
   }
 });
 
+/**
+ * Seed history through the app's own IndexedDB, then reload.
+ *
+ * Writing via `store.put` rather than clicking through the UI keeps this fast,
+ * and it exercises the same read path the screens use, so the chart is fed
+ * exactly what production would feed it. `settings` is written too because the
+ * positions screens read their entity lists from it.
+ */
+async function seedHistory(page, { store = 'pensionHistory', rows }) {
+  await page.evaluate(
+    async ({ store: storeName, rows: data }) => {
+      const open = () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 2);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const db = await open();
+      const write = (name, records) =>
+        new Promise((resolve, reject) => {
+          const tx = db.transaction(name, 'readwrite');
+          const os = tx.objectStore(name);
+          for (const record of records) os.put(record);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      await write(storeName, data);
+      db.close();
+    },
+    { store, rows }
+  );
+}
+
+test('the position charts draw an axis and a line for recorded history', async () => {
+  const { context, page } = await openPage();
+  try {
+    // Two pots across four months, with a deliberate gap in the second pot.
+    // The gap is the part that matters: joined across, it would draw a value of
+    // zero for months in which that pot did not exist.
+    const rows = [
+      { id: 'seed-p1', series: 'Work pension', date: '2024-01-15', value: 10000, currencyCode: 'GBP' },
+      { id: 'seed-p2', series: 'Work pension', date: '2024-02-15', value: 11000, currencyCode: 'GBP' },
+      { id: 'seed-p3', series: 'Work pension', date: '2024-03-15', value: 12000, currencyCode: 'GBP' },
+      { id: 'seed-p4', series: 'Work pension', date: '2024-04-15', value: 13500, currencyCode: 'GBP' },
+      { id: 'seed-p5', series: 'Side pot', date: '2024-01-10', value: 2000, currencyCode: 'GBP' },
+      { id: 'seed-p6', series: 'Side pot', date: '2024-04-10', value: 2600, currencyCode: 'GBP' }
+    ];
+    await gotoApp(page, '#pensions');
+    await seedHistory(page, { store: 'pensionHistory', rows });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.trend-chart', { timeout: 20_000 });
+
+    // The vertical axis is the feature being added, so assert it directly.
+    const axisLabels = await page.locator('.trend-axis-label').allTextContents();
+    assert.ok(axisLabels.length >= 2, `expected axis values, got ${JSON.stringify(axisLabels)}`);
+    for (const label of axisLabels) {
+      assert.match(label, /^-?[\d.]+[kbm]?$/, `axis label is not a readable value: "${label}"`);
+    }
+    // Ascending, which is what makes them readable as a scale.
+    const asNumbers = axisLabels.map((label) => Number(String(label).replace(/[kbm]$/, '')));
+    for (let index = 1; index < asNumbers.length; index += 1) {
+      assert.ok(asNumbers[index] > asNumbers[index - 1], `axis labels not ascending: ${JSON.stringify(axisLabels)}`);
+    }
+    // Compact form: 13,500 should not be printed as six digits in the gutter.
+    assert.ok(
+      axisLabels.every((label) => label.length <= 7),
+      `axis labels are too wide for the gutter: ${JSON.stringify(axisLabels)}`
+    );
+
+    // One polyline per contiguous run: the gapped pot is two, not one.
+    const lines = await page.locator('.trend-line').count();
+    assert.ok(lines >= 3, `expected at least 3 line segments across 2 series, got ${lines}`);
+
+    // A legend, because two series without one is unreadable.
+    const legend = await page.locator('.trend-legend li').allTextContents();
+    assert.ok(legend.some((text) => text.includes('Work pension')), `legend missing series: ${JSON.stringify(legend)}`);
+    assert.ok(legend.some((text) => text.includes('Side pot')), `legend missing series: ${JSON.stringify(legend)}`);
+
+    // The accessible description must carry the range, since the numbers on the
+    // axis are not announced.
+    const described = await page.locator('.trend-chart desc').first().textContent();
+    assert.match(described || '', /vertical axis runs from/i);
+  } catch (error) {
+    annotateFailure('Browser smoke: the position chart did not render an axis', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
 test('the cash flow screen shows the income streams panel and its metrics', async () => {
   const { context, page } = await openPage();
   try {

@@ -41,6 +41,7 @@
   import RecordList from './RecordList.svelte';
   import PositionUpdateModal from './PositionUpdateModal.svelte';
   import MonthlyHistoryTable from './MonthlyHistoryTable.svelte';
+  import HistoryTrend from './HistoryTrend.svelte';
   import PensionGrowthEditor from './PensionGrowthEditor.svelte';
   import PensionProjection from './PensionProjection.svelte';
 
@@ -109,6 +110,26 @@
       readValue: entityKey === 'netWorth' ? signedValue : (row) => num(row.value),
       convert: (value, currency) => convertCurrency(value, currency, $displayCurrency)
     })
+  );
+  /**
+   * The chart reads the same pivot as the table below it, so the two can never
+   * disagree, and it inherits the deliberate `null` for unrecorded months -
+   * `splitIntoRuns` breaks the line there rather than drawing a value of zero
+   * for a pension that did not exist yet.
+   *
+   * One line per series, mirroring the table's columns. Values are already
+   * converted to the display currency by `buildMonthlyHistoryTable`, so nothing
+   * is converted twice.
+   */
+  const trendSeries = $derived(
+    monthlyHistory.columns.map((column) => ({
+      key: column.key,
+      name: column.name,
+      points: monthlyHistory.rows.map((row) => ({
+        date: `${row.month}-01`,
+        value: row.cells[column.key]?.value ?? null
+      }))
+    }))
   );
   const pensionPotGrowth = $derived.by(() =>
     $settings.pensionPotGrowth && typeof $settings.pensionPotGrowth === 'object'
@@ -318,6 +339,13 @@
     <MonthlyHistoryTable
       table={monthlyHistory}
       emptyMessage="Record dated snapshots to see the monthly comparison."
+    />
+    <!-- One insertion covers Position, Investments and Pensions: all three render
+         this same component, parameterised by entityKey. -->
+    <HistoryTrend
+      series={trendSeries}
+      title={entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'}
+      emptyMessage="Record dated snapshots to see growth over time."
     />
   </section>
 
