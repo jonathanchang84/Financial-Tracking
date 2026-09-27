@@ -40,7 +40,7 @@ export function niceStep(rawStep) {
  *
  * Returns `{ min, max, ticks }` where `ticks` ascend from `min` to `max`.
  */
-export function niceScale(values, { tickCount = 5 } = {}) {
+export function niceScale(values, { tickCount = 5, floorAtZero = false } = {}) {
   const finite = (values || []).map(Number).filter((value) => Number.isFinite(value));
   const requested = Math.max(2, Math.min(10, Math.trunc(tickCount) || 5));
 
@@ -65,7 +65,12 @@ export function niceScale(values, { tickCount = 5 } = {}) {
   }
 
   const step = niceStep((high - low) / (requested - 1));
-  const min = Math.floor(low / step) * step;
+  // A bar chart is read as a length, so it has to start at zero. Rounding the
+  // floor to a nice step instead puts it at, say, 50k, and every segment below
+  // that is drawn off the bottom of the plot - the bars then look far too short
+  // and the smallest series vanishes entirely. Negative net worth is the one
+  // case where a zero floor is still correct: the axis simply spans both sides.
+  const min = floorAtZero ? Math.min(0, Math.floor(low / step) * step) : Math.floor(low / step) * step;
   const max = Math.ceil(high / step) * step;
 
   const ticks = [];
@@ -132,3 +137,131 @@ export function splitIntoRuns(points) {
   if (current.length) runs.push(current);
   return runs;
 }
+
+/* ---------------------------------------------------------------------------
+ * Bucketing and stacking.
+ *
+ * The bar chart shows the PEAK value reached in each year or month, not the
+ * value at the end of it. That is a deliberate difference from the table below,
+ * which shows the last value recorded in a month - so the chart is labelled to
+ * say which it is showing.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Bucket key for a date at the requested granularity.
+ *
+ * Strict on purpose. A loose slice turned `2024-13-99` into the bucket "2024",
+ * so a malformed date would silently create a real-looking bucket instead of
+ * being dropped - which hides a data problem rather than surfacing it. The
+ * round-trip check also rejects real-looking but impossible dates like
+ * `2024-02-31`, which `Date` would otherwise roll over into March.
+ */
+export function bucketKey(date, granularity = 'year') {
+  const value = String(date || '').slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return '';
+  const [, year, month, day] = match;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+  const valid =
+    parsed.getFullYear() === Number(year) &&
+    parsed.getMonth() === Number(month) - 1 &&
+    parsed.getDate() === Number(day);
+  if (!valid) return '';
+  return granularity === 'month' ? `${year}-${month}` : year;
+}
+
+/** Human label for a bucket key. */
+export function bucketLabel(key, granularity = 'year') {
+  if (granularity !== 'month') return String(key);
+  const [year, month] = String(key).split('-').map(Number);
+  if (!year || !month) return String(key);
+  const when = new Date(year, month - 1, 1);
+  return Number.isNaN(when.getTime()) ? String(key) : when.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+}
+
+/**
+ * Peak value per bucket for one series, with the date it was reached.
+ *
+ * The date matters: a stacked peak combines each pot's high-water mark, and
+ * those peaks rarely happened on the same day, so the tooltip has to be able to
+ * say when this one was set rather than implying simultaneity.
+ *
+ * Ties keep the earliest date, so re-rendering cannot shuffle which date is
+ * shown for a value that did not change.
+ */
+export function peakByBucket(points, granularity = 'year') {
+  const peaks = new Map();
+  for (const point of points || []) {
+    const key = bucketKey(point?.date, granularity);
+    const value = Number(point?.value);
+    if (!key || point?.value === null || point?.value === undefined) continue;
+    if (!Number.isFinite(value)) continue;
+    const existing = peaks.get(key);
+    if (!existing || value > existing.value) {
+      peaks.set(key, { value, date: String(point.date).slice(0, 10) });
+    }
+  }
+  return peaks;
+}
+
+/** Every bucket between the first and last, so gaps leave an empty slot. */
+export function bucketRange(keys, granularity = 'year') {
+  const sorted = [...new Set(keys.filter(Boolean))].sort();
+  if (!sorted.length) return [];
+  const out = [];
+  if (granularity !== 'month') {
+    for (let year = Number(sorted[0]); year <= Number(sorted.at(-1)); year += 1) out.push(String(year));
+    return out;
+  }
+  const [startYear, startMonth] = sorted[0].split('-').map(Number);
+  const [endYear, endMonth] = sorted.at(-1).split('-').map(Number);
+  for (let year = startYear, month = startMonth; year < endYear || (year === endYear && month <= endMonth);) {
+    out.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+  }
+  return out;
+}
+
+/**
+ * Cumulative `y0`/`y1` for each visible series within every bucket.
+ *
+ * A null is skipped rather than counted as zero. Treating "we have no figure"
+ * as "it was worth nothing" would put a zero-height segment in the stack, which
+ * reads as a real value.
+ *
+ * Totals are the sum of the stacked segments, so the axis can be scaled from
+ * them. That is the whole reason this is separate: a scale built from the largest
+ * individual value would put a 50k stack on a 30k axis and clip it with no error.
+ */
+export function stackSegments({ series = [], buckets = [] } = {}) {
+  return buckets.map((bucket) => {
+    const segments = [];
+    let base = 0;
+    let total = 0;
+    for (const line of series) {
+      const value = Number(line?.peaks?.get?.(bucket)?.value);
+      if (!Number.isFinite(value)) continue;
+      segments.push({ key: line.key, color: line.color, value, from: base, to: base + value });
+      base += value;
+      total += value;
+    }
+    return { bucket, segments, total };
+  });
+}
+
+/** Largest stacked total, which is what the y axis has to accommodate. */
+export function maxStackTotal(stacks) {
+  return (stacks || []).reduce((highest, entry) => (entry.total > highest ? entry.total : highest), 0);
+}
+
+/**
+ * How many labels to skip so x-axis text does not collide.
+ * Returns the step between labelled buckets; 1 means label everything.
+ */
+export function labelStride(bucketCount, plotWidth, approxLabelWidth = 44) {
+  if (bucketCount <= 1) return 1;
+  const fits = Math.max(1, Math.floor(plotWidth / Math.max(8, approxLabelWidth)));
+  return Math.max(1, Math.ceil(bucketCount / fits));
+}
+

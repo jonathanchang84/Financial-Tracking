@@ -77,6 +77,32 @@ small { color: var(--muted); }
 .positive { color: var(--positive); }
 .negative { color: var(--danger); }
 
+/* Chart controls: granularity toggle and per-series visibility. The toggles are
+   real checkboxes and buttons rather than clickable divs, so the whole panel is
+   keyboard operable. */
+.chart-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  margin: 14px 0 10px;
+}
+.chart-granularity { display: flex; gap: 6px; }
+.chip {
+  font: inherit; font-size: 0.76rem; cursor: pointer; padding: 5px 11px;
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--muted);
+}
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chart-series {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0;
+  border: 0; min-width: 0;
+}
+.series-toggle {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 0.8rem; color: var(--text);
+}
+.series-toggle input { accent-color: var(--accent); margin: 0; }
+.series-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Where the exchange rates in the figures came from, and when. A figure that
    silently uses stale rates is worse than one that admits to it. */
 .rate-note {

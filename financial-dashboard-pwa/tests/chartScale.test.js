@@ -1,7 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatAxisValue, niceScale, niceStep, splitIntoRuns } from '../src/services/chartScale.js';
+import {
+  bucketKey,
+  bucketLabel,
+  bucketRange,
+  formatAxisValue,
+  labelStride,
+  maxStackTotal,
+  niceScale,
+  niceStep,
+  peakByBucket,
+  splitIntoRuns,
+  stackSegments
+} from '../src/services/chartScale.js';
 
 test('tick steps round up to 1, 2, 5 or 10 times a power of ten', () => {
   // This is what makes an axis read 10k / 20k / 30k rather than 10,237 / 20,473.
@@ -103,6 +115,165 @@ test('a missing month breaks the line rather than dropping to zero', () => {
     for (const point of run) {
       assert.ok(Number.isFinite(point.value) && point.value > 0, 'a gap became a number');
     }
+  }
+});
+
+test('a bucket keeps the peak reached in it, not the last value', () => {
+  // The 2024 bar is the highest the pot was during 2024, not what it happened
+  // to be worth on 31 December.
+  const points = [
+    { date: '2024-01-15', value: 10_000 },
+    { date: '2024-03-15', value: 30_000 },
+    { date: '2024-11-15', value: 22_000 },
+    { date: '2024-12-31', value: 24_000 }
+  ];
+  const year = peakByBucket(points, 'year');
+  assert.equal(year.get('2024').value, 30_000, 'the March peak, not the December value');
+  assert.equal(year.get('2024').date, '2024-03-15', 'and the date it was reached');
+
+  const month = peakByBucket(points, 'month');
+  assert.equal(month.get('2024-03').value, 30_000);
+  assert.equal(month.get('2024-12').value, 24_000);
+  assert.equal(month.size, 4);
+});
+
+test('a tied peak keeps the earliest date, so a re-render cannot shuffle it', () => {
+  const peaks = peakByBucket(
+    [{ date: '2024-02-01', value: 5000 }, { date: '2024-05-01', value: 5000 }],
+    'year'
+  );
+  assert.equal(peaks.get('2024').value, 5000);
+  assert.equal(peaks.get('2024').date, '2024-02-01', 'the first occurrence of the maximum');
+});
+
+test('missing and unusable values never become a peak or a zero', () => {
+  const peaks = peakByBucket(
+    [
+      { date: '2024-01-01', value: null },
+      { date: '2024-02-01', value: undefined },
+      { date: '2024-03-01', value: 'nonsense' },
+      { date: 'not-a-date', value: 99_000 },
+      { date: '2024-04-01', value: 1200 }
+    ],
+    'year'
+  );
+  // A null must not be read as 0, which would set a floor, nor as a peak.
+  assert.equal(peaks.get('2024').value, 1200);
+  assert.equal(peaks.get('2024').date, '2024-04-01');
+  assert.equal(peaks.size, 1, 'the undated row contributed nothing');
+  assert.equal(peakByBucket([], 'year').size, 0);
+});
+
+test('bucket keys and labels work at both granularities', () => {
+  assert.equal(bucketKey('2024-06-15', 'year'), '2024');
+  assert.equal(bucketKey('2024-06-15', 'month'), '2024-06');
+  assert.equal(bucketKey('2024-06-15', undefined), '2024', 'year is the default');
+  for (const bad of ['', null, 'nonsense', '2024-13-99', '2024-02-31', '2024-00-10']) {
+    assert.equal(bucketKey(bad, 'year'), '', `${String(bad)} should not produce a bucket`);
+  }
+  // A real leap day is still accepted, so the strictness is not overreach.
+  assert.equal(bucketKey('2024-02-29', 'year'), '2024');
+  assert.equal(bucketKey('2023-02-29', 'year'), '', '2023 was not a leap year');
+  assert.equal(bucketLabel('2024', 'year'), '2024');
+  assert.match(bucketLabel('2024-06', 'month'), /24$/, 'a month label carries the year');
+  assert.equal(bucketLabel('junk', 'year'), 'junk');
+  assert.doesNotMatch(String(bucketLabel('junk', 'month')), /Invalid/);
+});
+
+test('the bucket range fills the gap so spacing stays even', () => {
+  assert.deepEqual(bucketRange(['2022', '2024'], 'year'), ['2022', '2023', '2024']);
+  assert.deepEqual(bucketRange(['2024-01', '2024-04'], 'month'), ['2024-01', '2024-02', '2024-03', '2024-04']);
+  // Year wrap-around is the case a naive month loop gets wrong.
+  assert.deepEqual(bucketRange(['2023-11', '2024-02'], 'month'), ['2023-11', '2023-12', '2024-01', '2024-02']);
+  assert.deepEqual(bucketRange(['2024'], 'year'), ['2024']);
+  assert.deepEqual(bucketRange([], 'year'), []);
+  assert.deepEqual(bucketRange(['2024', '2022', '2024'], 'year'), ['2022', '2023', '2024'], 'unsorted input');
+});
+
+test('segments stack upward and a missing series is skipped, not zeroed', () => {
+  const series = [
+    { key: 'a', color: '#1', peaks: peakByBucket([{ date: '2024-01-01', value: 300 }], 'year') },
+    { key: 'b', color: '#2', peaks: peakByBucket([{ date: '2024-02-01', value: 200 }], 'year') },
+    { key: 'c', color: '#3', peaks: peakByBucket([{ date: '2023-01-01', value: 999 }], 'year') }
+  ];
+  const [stack] = stackSegments({ series, buckets: ['2024'] });
+  assert.equal(stack.total, 500, 'c had no 2024 figure, so it is absent rather than zero');
+  assert.equal(stack.segments.length, 2, 'no zero-height segment for the missing series');
+  assert.deepEqual(stack.segments.map((s) => [s.from, s.to]), [[0, 300], [300, 500]]);
+  let cursor = 0;
+  for (const segment of stack.segments) {
+    assert.equal(segment.from, cursor, 'segments must be contiguous');
+    cursor = segment.to;
+  }
+  assert.equal(cursor, stack.total);
+});
+
+test('a bar axis starts at zero, so no segment is drawn off the plot', () => {
+  // The render showed solid single-colour bars: the axis floor rounded up to 50k,
+  // so every segment below 50k was drawn below the visible area and the tallest
+  // series painted over the lot. A bar is a length, so it has to start at zero.
+  const { min, max, ticks } = niceScale([77_800, 97_500, 108_000], { floorAtZero: true });
+  assert.equal(min, 0, 'the axis must include zero');
+  assert.ok(ticks.some((tick) => tick.value === 0), 'zero should be a labelled tick');
+  assert.ok(max >= 108_000);
+  // Every stacked total must land inside the plot, not below it.
+  for (const total of [77_800, 97_500, 108_000]) {
+    const ratio = (total - min) / (max - min || 1);
+    assert.ok(ratio > 0 && ratio <= 1, `${total} falls outside the plot (${ratio})`);
+  }
+  // The default is unchanged, so the line-chart path is untouched.
+  assert.ok(niceScale([77_800, 97_500, 108_000]).min > 0, 'a line axis may still pad the floor');
+
+  // Negative values must still be representable rather than clamped away.
+  const negative = niceScale([-4000, 20_000], { floorAtZero: true });
+  assert.ok(negative.min <= -4000, 'a negative total must not be cut off');
+  assert.ok(negative.max >= 20_000);
+});
+
+test('the axis is scaled from stacked totals, so a tall stack is not clipped', () => {
+  // The trap this whole module exists for: peaks of 300 and 200 draw a 500 bar,
+  // but a scale built from the largest individual value tops out near 300 and
+  // silently cuts the bar in half. Nothing errors; the number is just wrong.
+  const series = [
+    { key: 'a', peaks: peakByBucket([{ date: '2024-01-01', value: 300 }], 'year') },
+    { key: 'b', peaks: peakByBucket([{ date: '2024-01-01', value: 200 }], 'year') }
+  ];
+  const stacks = stackSegments({ series, buckets: ['2024'] });
+  const tallest = maxStackTotal(stacks);
+  assert.equal(tallest, 500);
+
+  const fromStack = niceScale([tallest]);
+  assert.ok(fromStack.max >= 500, `axis must reach the stacked total, got ${fromStack.max}`);
+
+  // The wrong way, for contrast: scaling from individual maxima clips the stack.
+  const fromMaxima = niceScale([300, 200]);
+  assert.ok(fromMaxima.max < 500, 'scaling from individual maxima would clip the stack');
+  assert.ok(fromStack.max > fromMaxima.max, 'the stacked scale is strictly wider');
+});
+
+test('a bucket where every series is missing produces no segments at all', () => {
+  const series = [{ key: 'a', peaks: peakByBucket([{ date: '2024-01-01', value: 100 }], 'year') }];
+  const stacks = stackSegments({ series, buckets: ['2024', '2025'] });
+  assert.equal(stacks.length, 2, 'the empty bucket still holds its slot');
+  assert.equal(stacks[1].segments.length, 0);
+  assert.equal(stacks[1].total, 0);
+  assert.ok(niceScale([0]).max > niceScale([0]).min, 'a zero total must not collapse the axis');
+});
+
+test('maxStackTotal copes with no data and with an all-zero stack', () => {
+  assert.equal(maxStackTotal([]), 0);
+  assert.equal(maxStackTotal([{ total: 0 }, { total: 0 }]), 0);
+  assert.equal(maxStackTotal([{ total: 5 }, { total: 90 }, { total: 12 }]), 90);
+});
+
+test('x-axis labels thin out instead of colliding', () => {
+  assert.equal(labelStride(4, 600, 44), 1, 'everything labelled when there is room');
+  assert.equal(labelStride(1, 600, 44), 1);
+  const stride = labelStride(60, 572, 44);
+  assert.ok(stride > 1, 'a dense axis must thin its labels');
+  assert.ok(Math.ceil(60 / stride) <= 15, 'too many labels would still collide');
+  for (const [count, width] of [[0, 0], [10, 0], [10, -5], [1000, 1]]) {
+    assert.ok(Number.isInteger(labelStride(count, width)) && labelStride(count, width) >= 1, `${count}/${width}`);
   }
 });
 

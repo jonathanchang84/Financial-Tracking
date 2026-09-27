@@ -161,57 +161,77 @@ async function seedHistory(page, { store = 'pensionHistory', rows }) {
   );
 }
 
-test('the position charts draw an axis and a line for recorded history', async () => {
+test('the position charts stack bars with a zero-based axis and selectable series', async () => {
   const { context, page } = await openPage();
   try {
-    // Two pots across four months, with a deliberate gap in the second pot.
-    // The gap is the part that matters: joined across, it would draw a value of
-    // zero for months in which that pot did not exist.
+    // Three pots across two years. "Old pot" stops after 2022, so it must
+    // contribute no segment to 2023 rather than a zero-height one.
+    // Values chosen so the stacked total lands just over a tick boundary
+    // (~$104k). With a 50k step that floors the axis to 50k without an explicit
+    // zero floor, which is the exact case the render bug showed. Totals around
+    // 90k floor to zero by luck and the assertion below passes for the wrong
+    // reason, which is worse than no assertion.
     const rows = [
-      { id: 'seed-p1', series: 'Work pension', date: '2024-01-15', value: 10000, currencyCode: 'GBP' },
-      { id: 'seed-p2', series: 'Work pension', date: '2024-02-15', value: 11000, currencyCode: 'GBP' },
-      { id: 'seed-p3', series: 'Work pension', date: '2024-03-15', value: 12000, currencyCode: 'GBP' },
-      { id: 'seed-p4', series: 'Work pension', date: '2024-04-15', value: 13500, currencyCode: 'GBP' },
-      { id: 'seed-p5', series: 'Side pot', date: '2024-01-10', value: 2000, currencyCode: 'GBP' },
-      { id: 'seed-p6', series: 'Side pot', date: '2024-04-10', value: 2600, currencyCode: 'GBP' }
-    ];
+      ['Work pension', '2022-03-15', 48_000], ['Work pension', '2022-08-15', 55_000],
+      ['Work pension', '2022-12-15', 51_000], ['Work pension', '2023-03-15', 62_000],
+      ['Work pension', '2023-12-15', 68_000],
+      ['Side pot', '2022-06-10', 9_000], ['Side pot', '2022-10-10', 11_000],
+      ['Side pot', '2023-04-10', 14_000],
+      ['Old pot', '2022-05-01', 4_000], ['Old pot', '2022-09-01', 4_500]
+    ].map(([series, date, value], index) => ({
+      id: `stack-${index}`, series, date, value, currencyCode: 'GBP'
+    }));
+
     await gotoApp(page, '#pensions');
     await seedHistory(page, { store: 'pensionHistory', rows });
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.trend-chart', { timeout: 20_000 });
+    await page.waitForSelector('.trend-bar', { timeout: 20_000 });
 
-    // The vertical axis is the feature being added, so assert it directly.
-    const axisLabels = await page.locator('.trend-axis-label').allTextContents();
-    assert.ok(axisLabels.length >= 2, `expected axis values, got ${JSON.stringify(axisLabels)}`);
-    for (const label of axisLabels) {
-      assert.match(label, /^-?[\d.]+[kbm]?$/, `axis label is not a readable value: "${label}"`);
+    // Stacked, not one bar per series: two years x three pots, but "Old pot" is
+    // absent from 2023, so 2022 has 3 segments and 2023 has 2.
+    assert.equal(await page.locator('.trend-bar').count(), 5, 'expected 3 segments in 2022 and 2 in 2023');
+
+    // A bar is a length, so the axis has to start at zero. When the floor
+    // rounded up to a nice step the small segments were drawn off the plot and
+    // the chart read as one solid bar.
+    const axis = await page.locator('.trend-axis-label').allTextContents();
+    assert.equal(axis[0], '0', `the y axis must start at zero, got ${JSON.stringify(axis)}`);
+    for (const label of axis) {
+      assert.match(label, /^-?[\d.]+[kbm]?$/, `unreadable axis label: "${label}"`);
     }
-    // Ascending, which is what makes them readable as a scale.
-    const asNumbers = axisLabels.map((label) => Number(String(label).replace(/[kbm]$/, '')));
-    for (let index = 1; index < asNumbers.length; index += 1) {
-      assert.ok(asNumbers[index] > asNumbers[index - 1], `axis labels not ascending: ${JSON.stringify(axisLabels)}`);
-    }
-    // Compact form: 13,500 should not be printed as six digits in the gutter.
-    assert.ok(
-      axisLabels.every((label) => label.length <= 7),
-      `axis labels are too wide for the gutter: ${JSON.stringify(axisLabels)}`
+
+    // Peak, not last value: 2022's Work pension bar must reflect the August high
+    // of 46,000 rather than December's 43,000, so the 2022 total is above what a
+    // last-value reading would give.
+    const totals = await page.locator('.trend-total').allTextContents();
+    assert.equal(totals.length, 2, `one total per year, got ${JSON.stringify(totals)}`);
+    assert.ok(/^[\d.]+[kbm]?$/.test(totals[0]), `total is not a readable value: ${totals[0]}`);
+
+    // Year by default, with a control to expand to months.
+    const months = await page.locator('.trend-month-label').allTextContents();
+    assert.deepEqual(months, ['2022', '2023'], `expected year labels, got ${JSON.stringify(months)}`);
+    await page.getByRole('button', { name: 'By month' }).click();
+    await page.waitForFunction(
+      () => document.querySelectorAll('.trend-bar').length > 5,
+      null,
+      { timeout: 10_000 }
     );
+    const monthLabels = await page.locator('.trend-month-label').allTextContents();
+    assert.ok(monthLabels.some((label) => /\d{2}$/.test(label)), `expected month labels, got ${JSON.stringify(monthLabels)}`);
 
-    // One polyline per contiguous run: the gapped pot is two, not one.
-    const lines = await page.locator('.trend-line').count();
-    assert.ok(lines >= 3, `expected at least 3 line segments across 2 series, got ${lines}`);
-
-    // A legend, because two series without one is unreadable.
-    const legend = await page.locator('.trend-legend li').allTextContents();
-    assert.ok(legend.some((text) => text.includes('Work pension')), `legend missing series: ${JSON.stringify(legend)}`);
-    assert.ok(legend.some((text) => text.includes('Side pot')), `legend missing series: ${JSON.stringify(legend)}`);
-
-    // The accessible description must carry the range, since the numbers on the
-    // axis are not announced.
-    const described = await page.locator('.trend-chart desc').first().textContent();
-    assert.match(described || '', /vertical axis runs from/i);
+    // Every series gets a checkbox, and unticking one removes its segments.
+    const toggles = page.locator('.series-toggle input');
+    assert.equal(await toggles.count(), 3, 'one toggle per series');
+    const before = await page.locator('.trend-bar').count();
+    await toggles.nth(0).uncheck();
+    await page.waitForFunction(
+      (was) => document.querySelectorAll('.trend-bar').length < was,
+      before,
+      { timeout: 10_000 }
+    );
+    assert.ok(await page.locator('.series-toggle input:not(:checked)').count() >= 1, 'the toggle should stay unchecked');
   } catch (error) {
-    annotateFailure('Browser smoke: the position chart did not render an axis', error?.message || error);
+    annotateFailure('Browser smoke: the stacked bar chart is wrong', error?.message || error);
     throw error;
   } finally {
     await context.close();

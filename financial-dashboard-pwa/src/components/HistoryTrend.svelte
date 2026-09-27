@@ -1,86 +1,127 @@
 <script>
   /**
-   * Small, accessible line chart for dated position/portfolio history.
+   * Stacked bar chart for position, investment and pension history.
    *
    * Hand-rolled SVG rather than a charting library: the project has no chart
-   * dependency, and this only needs a line, an axis and a legend. It also keeps
-   * the `aria-label`/`desc`/`title` structure a canvas chart would throw away,
-   * which matters for a finance app.
+   * dependency, and a stacked bar with an axis is not worth one. It also keeps
+   * the `aria-label`/`desc`/`title` structure a canvas chart would throw away.
    *
-   * Takes either a single series (`points`) or several (`series`). The monthly
-   * history table has one column per item, so the chart mirrors that.
+   * Two decisions worth knowing, because both change what a bar means:
    *
-   * A `null` value is a month with no record and the line breaks there. The
-   * monthly table fills gaps with `null` deliberately, and joining across one
-   * would claim a pension was worth nothing.
+   *   - A bar shows the PEAK value reached in that year or month, not the value
+   *     at the end of it. The monthly table below shows the end-of-month figure,
+   *     so the panel says which this is rather than leaving the two to disagree
+   *     quietly.
+   *   - Stacking peaks combines each series' high-water mark, and those peaks
+   *     rarely happened on the same day. Segment tooltips carry the date each
+   *     peak was reached, and the caption says so, so the total is not read as a
+   *     balance that was actually held.
+   *
+   * A series with no figure for a bucket contributes no segment at all. Drawing
+   * a zero-height one would read as "it was worth nothing" rather than "we have
+   * no record", which is a different statement.
    */
   import { displayCurrency, money } from '../stores/finance.js';
-  import { num } from '../services/runway.js';
   import { longLabel } from '../services/dates.js';
-  import { formatAxisValue, niceScale, splitIntoRuns } from '../services/chartScale.js';
+  import {
+    bucketLabel,
+    bucketRange,
+    formatAxisValue,
+    labelStride,
+    maxStackTotal,
+    niceScale,
+    peakByBucket,
+    stackSegments
+  } from '../services/chartScale.js';
 
   let {
-    points = [],
     series = [],
+    hidden = [],
     title = 'History',
-    emptyMessage = 'Record dated snapshots to see the trend.',
-    height = 200
+    granularity = 'year',
+    emptyMessage = 'Record dated snapshots to see growth over time.',
+    height = 240
   } = $props();
 
-  // Plot area inside the viewBox. The left gutter holds the y labels, so it is
-  // generous: "12.4k" needs room at the display size.
-  const PLOT = { left: 52, right: 16, top: 12, bottom: 26 };
+  const PLOT = { left: 54, right: 12, top: 12, bottom: 28 };
   const WIDTH = 640;
   const plotWidth = WIDTH - PLOT.left - PLOT.right;
   const plotHeight = height - PLOT.top - PLOT.bottom;
   const SWATCHES = ['#0f766e', '#2563eb', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#65a30d', '#db2777'];
 
-  /** Normalised to one shape, so single and multi series share all the maths. */
-  const lines = $derived.by(() => {
-    if (series.length) {
-      return series.map((item, index) => ({
-        key: item.key,
-        name: item.name,
-        points: item.points || [],
-        color: SWATCHES[index % SWATCHES.length],
-        total: false
-      }));
-    }
-    if (!points.length) return [];
-    return [{ key: 'value', name: title, points, color: SWATCHES[0], total: true }];
-  });
-
-  const allValues = $derived(lines.flatMap((line) => line.points.map((point) => num(point.value))));
-  const scale = $derived(niceScale(allValues));
-  const monthCount = $derived(Math.max(...lines.map((line) => line.points.length), 0));
-
-  /** X is by month index, not by date, so gaps stay evenly spaced. */
-  const xAt = (index) =>
-    PLOT.left + (monthCount === 1 ? plotWidth / 2 : (index * plotWidth) / (monthCount - 1));
-  const yAt = (value) =>
-    PLOT.top + plotHeight - ((num(value) - scale.min) / (scale.max - scale.min || 1)) * plotHeight;
-
-  const drawnLines = $derived(
-    lines.map((line) => ({
-      ...line,
-      runs: splitIntoRuns(line.points).map((run) =>
-        run.map((point, index) => `${xAt(index)},${yAt(point.value)}`).join(' ')
-      )
+  /** Every series, each with its own colour and its peak per bucket. */
+  const allSeries = $derived(
+    series.map((item, index) => ({
+      key: item.key,
+      name: item.name,
+      color: SWATCHES[index % SWATCHES.length],
+      points: item.points || [],
+      peaks: peakByBucket(item.points || [], granularity)
     }))
   );
 
-  const zeroY = $derived.by(() => (scale.min > 0 || scale.max < 0 ? null : yAt(0)));
-  const monthLabels = $derived((lines[0]?.points || []).map((point) => longLabel(point.date)));
-  const fmt = (value) => money(num(value), $displayCurrency);
+  const visibleSeries = $derived(allSeries.filter((line) => !hidden.includes(line.key)));
+  const buckets = $derived(bucketRange(allSeries.flatMap((line) => [...line.peaks.keys()]), granularity));
+  const stacks = $derived(stackSegments({ series: visibleSeries, buckets }));
+
+  // Scaled from the stacked totals, not the individual maxima. Scaling from the
+  // largest single value puts a 50k stack on a 30k axis and clips it with no
+  // error at all. `floorAtZero` because a bar is read as a length from zero.
+  const scale = $derived(niceScale([maxStackTotal(stacks)], { floorAtZero: true }));
+  const yAt = (value) =>
+    PLOT.top + plotHeight - ((Number(value) - scale.min) / (scale.max - scale.min || 1)) * plotHeight;
+
+  const slot = $derived(buckets.length ? plotWidth / buckets.length : plotWidth);
+  // A bar never eats the whole slot, and never thins out to nothing.
+  const barWidth = $derived(Math.max(3, Math.min(64, slot * 0.62)));
+  const centreAt = (index) => PLOT.left + slot * (index + 0.5);
+
+  const stride = $derived(labelStride(buckets.length, plotWidth));
+  const fmt = (value) => money(Number(value), $displayCurrency);
+  const fmtShort = (value) => formatAxisValue(value);
+
+  const peakRange = $derived.by(() => {
+    const dates = visibleSeries.flatMap((line) => [...line.peaks.values()].map((peak) => peak.date)).sort();
+    return dates.length ? `${longLabel(dates[0])} to ${longLabel(dates.at(-1))}` : '';
+  });
+
+  /** Series key -> display name, so a segment tooltip can name itself. */
+  const namesByKey = $derived(Object.fromEntries(allSeries.map((line) => [line.key, line.name])));
+
+  /**
+   * Tooltip text for one stacked segment.
+   *
+   * Includes the date the peak was reached. Stacking combines high-water marks
+   * from different days, so without this the total reads as a balance that was
+   * held on a single date - which it may never have been.
+   */
+  function segmentLabel(bucket, segment, granularity, names) {
+    const when = granularity === 'month' ? bucketLabel(bucket, 'month') : bucket;
+    const peak = allSeries.find((line) => line.key === segment.key)?.peaks?.get(bucket);
+    const name = names?.[segment.key] || segment.key;
+    return `${name} · ${when} peak${peak?.date ? ` (${longLabel(peak.date)})` : ''}`;
+  }
+
   const a11yLabel = $derived(
-    `${title} by month, ${monthLabels.length ? `${monthLabels[0]} to ${monthLabels.at(-1)}` : ''}, ` +
-      `from ${formatAxisValue(scale.min)} to ${formatAxisValue(scale.max)}`
+    `Stacked bar chart of ${title.toLowerCase()} peak values by ${granularity}. ` +
+      `Vertical axis from ${fmtShort(scale.min)} to ${fmtShort(scale.max)}. ` +
+      `${visibleSeries.length} series shown: ${visibleSeries.map((line) => line.name).join(', ') || 'none'}.`
   );
 </script>
 
 
-{#if lines.some((line) => line.points.length)}
+
+{#if buckets.length && allSeries.some((line) => line.peaks.size)}
   <div class="trend-visual">
+    <div class="trend-head">
+      <p class="eyebrow">{granularity === 'month' ? 'PEAK VALUE BY MONTH' : 'PEAK VALUE BY YEAR'}</p>
+      <p class="hint">
+        The highest value reached in each {granularity}{visibleSeries.length > 1
+          ? '. Stacked peaks may not have been held on the same date'
+          : '.'}{peakRange ? ` Span ${peakRange}.` : ''}
+      </p>
+    </div>
+
     <svg
       class="trend-chart"
       viewBox={`0 0 ${WIDTH} ${height}`}
@@ -90,73 +131,49 @@
     >
       <title>{a11yLabel}</title>
       <desc>
-        Line chart of {title.toLowerCase()} by month. The vertical axis runs from
-        {formatAxisValue(scale.min)} to {formatAxisValue(scale.max)}.
-        {#each lines as line (line.key)}{line.name} has
-        {line.points.filter((point) => point.value !== null && point.value !== undefined).length}
-        recorded month(s).{/each}
+        Stacked bars of {title.toLowerCase()} peak values by {granularity}, {buckets.length} bars.
+        The vertical axis runs from {fmtShort(scale.min)} to {fmtShort(scale.max)}.
       </desc>
 
-      <!-- Gridlines carry the value, which is the point of the exercise: the
-           numbers on the left are readable without hovering anything. -->
       {#each scale.ticks as tick (tick.value)}
-        <line
-          class="trend-grid"
-          x1={PLOT.left}
-          x2={WIDTH - PLOT.right}
-          y1={PLOT.top + plotHeight - tick.ratio * plotHeight}
-          y2={PLOT.top + plotHeight - tick.ratio * plotHeight}
-        />
-        <text
-          class="trend-axis-label"
-          x={PLOT.left - 8}
-          y={PLOT.top + plotHeight - tick.ratio * plotHeight + 3}
-          text-anchor="end"
-        >{formatAxisValue(tick.value)}</text>
+        <line class="trend-grid" x1={PLOT.left} x2={WIDTH - PLOT.right} y1={yAt(tick.value)} y2={yAt(tick.value)} />
+        <text class="trend-axis-label" x={PLOT.left - 8} y={yAt(tick.value) + 3} text-anchor="end">
+          {fmtShort(tick.value)}
+        </text>
       {/each}
 
-      {#if zeroY !== null}
-        <line class="trend-zero" x1={PLOT.left} x2={WIDTH - PLOT.right} y1={zeroY} y2={zeroY} />
-      {/if}
-
-      {#each drawnLines as line (line.key)}
-        {#each line.runs as runPoints, index (index)}
-          <polyline class="trend-line" points={runPoints} style={`stroke: ${line.color}`} />
+      {#each stacks as stack, index (stack.bucket)}
+        {#each stack.segments as segment (segment.key)}
+          {@const top = yAt(segment.to)}
+          {@const bottom = yAt(segment.from)}
+          <rect
+            class="trend-bar"
+            x={centreAt(index) - barWidth / 2}
+            y={top}
+            width={barWidth}
+            height={Math.max(1, bottom - top)}
+            fill={segment.color}
+          >
+            <title>
+              {segmentLabel(stack.bucket, segment, granularity, namesByKey)}: {fmt(segment.value)}
+            </title>
+          </rect>
         {/each}
-        <!-- Points only on a single series: with many series and months they
-             overlap into a solid band. Exact values stay on hover and in the
-             table beneath. -->
-        {#if line.total && line.points.length <= 60}
-          {#each splitIntoRuns(line.points) as run (run[0]?.date)}
-            {#each run as point, index (point.date)}
-              <circle cx={xAt(index)} cy={yAt(point.value)} r="3">
-                <title>{longLabel(point.date)}: {fmt(point.value)}</title>
-              </circle>
-            {/each}
-          {/each}
+        {#if stack.total}
+          <text class="trend-total" x={centreAt(index)} y={yAt(stack.total) - 5} text-anchor="middle">
+            {fmtShort(stack.total)}
+          </text>
         {/if}
       {/each}
 
-      <!-- Month labels on the x axis, three only so they never collide. -->
-      {#if monthCount > 1}
-        {#each [...new Set([0, Math.floor((monthCount - 1) / 2), monthCount - 1])] as index (index)}
-          <text
-            class="trend-month-label"
-            x={xAt(index)}
-            y={height - 8}
-            text-anchor={index === 0 ? 'start' : index === monthCount - 1 ? 'end' : 'middle'}
-          >{monthLabels[index] || ''}</text>
-        {/each}
-      {/if}
+      {#each buckets as bucket, index (bucket)}
+        {#if index % stride === 0}
+          <text class="trend-month-label" x={centreAt(index)} y={height - 9} text-anchor="middle">
+            {bucketLabel(bucket, granularity)}
+          </text>
+        {/if}
+      {/each}
     </svg>
-
-    {#if lines.length > 1}
-      <ul class="trend-legend" aria-label="{title} series">
-        {#each lines as line (line.key)}
-          <li><span class="legend-swatch" style={`background: ${line.color}`}></span>{line.name}</li>
-        {/each}
-      </ul>
-    {/if}
   </div>
 {:else}
   <p class="muted">{emptyMessage}</p>
@@ -164,19 +181,17 @@
 
 <style>
   .trend-visual { background: var(--panel-alt); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .trend-head { padding: 0 4px 6px; }
+  .trend-head .eyebrow { margin: 0 0 2px; }
+  .trend-head .hint { margin: 0; }
   .trend-chart { display: block; width: 100%; height: auto; }
-  .trend-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  .trend-bar { shape-rendering: crispEdges; }
+  .trend-bar:hover { opacity: 0.82; }
   .trend-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; }
-  .trend-zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
   .trend-axis-label { fill: var(--muted); font-size: 10px; }
   .trend-month-label { fill: var(--muted); font-size: 10px; }
-  .trend-chart circle { fill: var(--panel); stroke-width: 2; }
-  .trend-legend {
-    list-style: none; padding: 8px 4px 0; margin: 0; display: flex; flex-wrap: wrap;
-    gap: 6px 16px; font-size: 0.74rem; color: var(--muted);
-  }
-  .trend-legend li { display: flex; align-items: center; gap: 6px; }
-  .legend-swatch { width: 10px; height: 3px; border-radius: 2px; }
+  .trend-total { fill: var(--muted); font-size: 9px; }
   @media (max-width: 560px) { .trend-axis-label, .trend-month-label { font-size: 11px; } }
 </style>
+
 

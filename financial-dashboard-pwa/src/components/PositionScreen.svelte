@@ -32,6 +32,7 @@
   } from '../services/positions.js';
   import { isCurrentVersion } from '../services/scd2.js';
   import { num, currencyOf, seriesNameOf } from '../services/runway.js';
+  import { saveSettings } from '../stores/finance.js';
   import { projectPensionSeries, MAX_PENSION_PROJECTION_YEARS } from '../services/financeCalculations.js';
   import { buildMonthlyHistoryTable } from '../services/monthlyHistory.js';
   import { todayISO } from '../services/recordHelpers.js';
@@ -112,14 +113,9 @@
     })
   );
   /**
-   * The chart reads the same pivot as the table below it, so the two can never
-   * disagree, and it inherits the deliberate `null` for unrecorded months -
-   * `splitIntoRuns` breaks the line there rather than drawing a value of zero
-   * for a pension that did not exist yet.
-   *
-   * One line per series, mirroring the table's columns. Values are already
-   * converted to the display currency by `buildMonthlyHistoryTable`, so nothing
-   * is converted twice.
+   * Points for the chart, one per series, mirroring the table's columns.
+   * Values are already converted to the display currency by
+   * `buildMonthlyHistoryTable`, so nothing is converted twice.
    */
   const trendSeries = $derived(
     monthlyHistory.columns.map((column) => ({
@@ -131,6 +127,47 @@
       }))
     }))
   );
+
+  /* --- chart view options: which series are shown, and at what granularity --- */
+
+  const CHART_OPTIONS_KEY = 'chartViewOptions';
+  const chartOptions = $derived(
+    $settings[CHART_OPTIONS_KEY] && typeof $settings[CHART_OPTIONS_KEY] === 'object'
+      ? $settings[CHART_OPTIONS_KEY]
+      : {}
+  );
+  // Per entityKey, so hiding a holding does not hide a pension.
+  const savedForScreen = $derived(chartOptions[entityKey] || {});
+  const granularity = $derived(savedForScreen.granularity === 'month' ? 'month' : 'year');
+
+  /**
+   * Hidden series keys, intersected with the series that actually exist.
+   *
+   * Series get renamed, and a saved key for a series that no longer exists must
+   * not hide a different one that took its place. If nothing matches, nothing is
+   * hidden - a chart with every series struck out is worse than a stale preference.
+   */
+  const hiddenSeries = $derived.by(() => {
+    const known = new Set(trendSeries.map((item) => item.key));
+    const saved = Array.isArray(savedForScreen.hidden) ? savedForScreen.hidden : [];
+    return saved.filter((key) => known.has(key));
+  });
+
+  function saveChartOptions(patch) {
+    const next = { ...chartOptions, [entityKey]: { ...savedForScreen, ...patch } };
+    return saveSettings({ [CHART_OPTIONS_KEY]: next });
+  }
+
+  async function toggleSeries(key) {
+    const hidden = new Set(hiddenSeries);
+    if (hidden.has(key)) hidden.delete(key);
+    else hidden.add(key);
+    await saveChartOptions({ hidden: [...hidden] });
+  }
+
+  async function setGranularity(value) {
+    await saveChartOptions({ granularity: value === 'month' ? 'month' : 'year' });
+  }
   const pensionPotGrowth = $derived.by(() =>
     $settings.pensionPotGrowth && typeof $settings.pensionPotGrowth === 'object'
       ? $settings.pensionPotGrowth
@@ -342,8 +379,46 @@
     />
     <!-- One insertion covers Position, Investments and Pensions: all three render
          this same component, parameterised by entityKey. -->
+    {#if trendSeries.length}
+      <div class="chart-controls">
+        <div class="chart-granularity" role="group" aria-label="Chart granularity">
+          <button
+            type="button"
+            class="chip"
+            class:active={granularity === 'year'}
+            aria-pressed={granularity === 'year'}
+            onclick={() => setGranularity('year')}
+          >By year</button>
+          <button
+            type="button"
+            class="chip"
+            class:active={granularity === 'month'}
+            aria-pressed={granularity === 'month'}
+            onclick={() => setGranularity('month')}
+          >By month</button>
+        </div>
+        <!-- Real checkboxes rather than clickable divs, so this is keyboard and
+             screen-reader operable. Each one hides or shows a series. -->
+        <fieldset class="chart-series">
+          <legend class="visually-hidden">Series shown in the chart</legend>
+          {#each trendSeries as item (item.key)}
+            <label class="series-toggle">
+              <input
+                type="checkbox"
+                checked={!hiddenSeries.includes(item.key)}
+                onchange={() => toggleSeries(item.key)}
+              />
+              <span>{item.name}</span>
+            </label>
+          {/each}
+        </fieldset>
+      </div>
+    {/if}
+
     <HistoryTrend
       series={trendSeries}
+      hidden={hiddenSeries}
+      granularity={granularity}
       title={entityKey === 'holdings' ? 'Portfolio value' : entityKey === 'pensions' ? 'Pension value' : 'Net worth'}
       emptyMessage="Record dated snapshots to see growth over time."
     />
