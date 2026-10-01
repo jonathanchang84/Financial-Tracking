@@ -3,14 +3,16 @@
  *
  * Runway rules:
  *   - one row per day across the pay cycle that contains today, inclusive
- *   - safe to spend reserves every bill and Spend Item still ahead of today
+ *   - safe to spend reserves every bill and Spend Item due today or later
  *   - that reserve is divided once by the *remaining* day count — today through
  *     payday — so the daily figure is a budget for the days still spendable, and
  *     the cumulative column is exactly `safeDaily × daysFromToday`, finishing on
  *     that reserve, so it can never exceed the cash available
- *   - a day already gone is history: its charges always apply, so the shaded rows
- *     show the bills that really left the account and the balances above them step
- *     down. Only today and future occurrences are suppressed by a paid marker
+ *   - a day that is today or already gone is committed: its charges always apply,
+ *     so the shaded rows show the bills that really left the account, today's row
+ *     shows what is committed today, and the balances above them step down. Only
+ *     occurrences strictly *ahead* of today are dropped by a paid marker, so what
+ *     the day costs never depends on whether it has been ticked off
  *   - safe to spend is hypothetical and never reduces Starting or Ending
  *   - Ending changes only for actual Spend Items and bills on that day
  *   - Saturday / Sunday bill due dates shift forward to Monday
@@ -117,29 +119,39 @@ function billOccurrenceMonth(bill, date) {
  * What is charged on one day of the window.
  *
  * `todayKey` splits the two cases that were previously collapsed into one. A day
- * already gone is *history*: the money left the account whether or not the bill was
- * ever ticked off, so the charge always applies and the shaded rows keep the bills
- * that really went out. Today and future occurrences are the ones being reserved,
- * so a paid marker drops them there and only there.
+ * that is today or already gone is *committed*: the charge belongs to that day
+ * whether or not the bill was ever ticked off, so the shaded rows keep the bills
+ * that really went out and today's row shows what is committed today. Only
+ * occurrences strictly *ahead* of today are the ones still being reserved, so a
+ * paid marker drops them there and only there.
  *
  * Applying `isExpensePaid` to past days was what emptied the shaded rows: a bill
  * marked paid vanished from history, and because `ending` is built from the
  * charges on the day, the balances above it never stepped down either. The
  * grid then contradicted the same bill still being listed in the month view.
+ *
+ * Leaving today inside the paid-marker case was the same mistake one day later:
+ * the day's own row reported `£0` for two bills that are plainly still committed
+ * today, which quietly inflated Safe to spend by the amount that went missing.
+ * "Paid" is a note that the money has moved, not proof of the day it moved on,
+ * so it decides which *future* occurrences to stop reserving — never whether a
+ * day that has already arrived costs what it costs.
  */
 function scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses, todayKey = '' }) {
   const key = dayKey(date);
-  const isHistory = Boolean(todayKey) && key < todayKey;
+  // Committed on or before today. Strictly-future days are the only ones a paid
+  // marker is allowed to clear.
+  const isCommitted = Boolean(todayKey) && key <= todayKey;
   const commitments = relevantCommitments.reduce(
     (sum, item) =>
-      dayKey(item.date) === key && (isHistory || !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7)))
+      dayKey(item.date) === key && (isCommitted || !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7)))
         ? sum + num(item.amount)
         : sum,
     0
   );
   const bills = relevantBills.reduce(
     (sum, bill) =>
-      billIsDueOn(bill, date) && (isHistory || !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date)))
+      billIsDueOn(bill, date) && (isCommitted || !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date)))
         ? sum + num(bill.amount)
         : sum,
     0

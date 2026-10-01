@@ -1,7 +1,7 @@
 <script>
   /**
    * Daily runway grid across a pay cycle: starting balance, hypothetical
-   * safe-to-spend amount, Spend Items, cumulative hypothetical safe spend, bills
+   * safe-to-spend amount, cumulative hypothetical safe spend, Spend Items, bills
    * and actual ending balance.
    *
    * Three distinctions the grid itself carries, so none of them is re-derived
@@ -39,8 +39,8 @@
         <col class="runway-date" />
         <col class="runway-number" />
         <col class="runway-number" />
-        <col class="runway-number" />
         <col class="runway-cumulative" />
+        <col class="runway-number" />
         <col class="runway-number" />
         <col class="runway-number" />
       </colgroup>
@@ -49,8 +49,8 @@
           <th scope="col" class="text-cell">Date</th>
           <th scope="col">Starting</th>
           <th scope="col">Safe to spend</th>
-          <th scope="col">Spend Items</th>
           <th scope="col">Projected cumulative safe spend</th>
+          <th scope="col">Spend Items</th>
           <th scope="col">Scheduled bills</th>
           <th scope="col">Ending</th>
         </tr>
@@ -68,8 +68,8 @@
             </th>
             <td>{cell(row.starting)}</td>
             <td>{cell(row.safe)}</td>
-            <td class:strong={row.commitments > 0}>{cell(row.commitments)}</td>
             <td>{cell(row.cumulativeSafeSpend)}</td>
+            <td class:strong={row.commitments > 0}>{cell(row.commitments)}</td>
             <td class:strong={row.bills > 0}>{cell(row.bills)}</td>
             <td class="strong" class:negative={row.ending !== null && row.ending < 0}>{cell(row.ending)}</td>
           </tr>
@@ -82,7 +82,7 @@
     days already gone are shaded. Days with no recorded balance show an em-dash rather than a
     figure: enter a balance for that date above to fill them in, and a day marked "Recorded" is a
     captured figure while the rest are carried forward from it.
-    Safe to spend is the cash remaining after every bill and Spend Item still ahead of today,
+    Safe to spend is the cash remaining after every bill and Spend Item due today or later,
     divided by the days from today to the end of the cycle. The daily amount is the same on each
     row, so the projected cumulative counts up from today and the last row equals the cash after
     bills and Spend Items. It is hypothetical, so it does not reduce Starting or Ending, and

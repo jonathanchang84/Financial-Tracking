@@ -664,6 +664,48 @@ test('a past bill is still shown and still steps the balance down', () => {
   assert.equal(future.cashAfterPlannedSpend, 900, 'so it is not reserved against a settled balance');
 });
 
+test("today's row shows what is committed today whether or not it is ticked paid", () => {
+  // The reported screen: Thursday 1 October, cycle 25 Sep -> 23 Oct, with a balance
+  // recorded on both the opening payday and today. Two bills fall due on day 1.
+  const args = {
+    balance: 1758.04,
+    currency: 'GBP',
+    payday: '2026-10-23',
+    // The 25th is a Sunday, so the cycle closes on the Friday before it.
+    paydayDayOfMonth: 25,
+    today: '2026-10-01',
+    balanceHistory: [
+      { id: 'b1', date: '2026-09-25', amount: 4433.68, currencyCode: 'GBP' },
+      { id: 'b2', date: '2026-10-01', amount: 1758.04, currencyCode: 'GBP' }
+    ],
+    bills: [
+      { id: 'council', amount: 214, dueDay: 1, currencyCode: 'GBP' },
+      { id: 'tv', amount: 14.56, dueDay: 1, currencyCode: 'GBP' },
+      { id: 'gym', amount: 35.99, dueDay: 3, currencyCode: 'GBP' }
+    ],
+    commitments: []
+  };
+  const rowOn = (plan, date) => new Map(plan.rows.map((r) => [r.date, r])).get(date);
+  const marked = { 'bill:council:2026-10': true, 'bill:tv:2026-10': true };
+  const ticked = runwayPlanner({ ...args, paidExpenses: marked });
+  const unticked = runwayPlanner(args);
+
+  // Today's row reported £0 for two bills that are plainly committed today, which
+  // quietly inflated Safe to spend by the amount that went missing. "Paid" says the
+  // money has moved; it cannot say the day it moved on.
+  assert.equal(rowOn(ticked, '2026-10-01').bills, 228.56, '214 + 14.56 is committed today');
+  assert.equal(rowOn(unticked, '2026-10-01').bills, 228.56, 'and it is the same figure ticked or not');
+  assert.equal(rowOn(ticked, '2026-10-01').ending, 1529.48, 'today steps down by what it committed');
+  assert.equal(rowOn(ticked, '2026-10-01').ending, rowOn(unticked, '2026-10-01').ending);
+  assert.equal(ticked.safeDaily, unticked.safeDaily, 'ticking must not inflate the budget');
+
+  // The boundary: only occurrences strictly ahead of today are cleared by a marker.
+  // Gym is due on the 3rd, a Saturday, so it charges on Monday the 5th.
+  const future = runwayPlanner({ ...args, paidExpenses: { ...marked, 'bill:gym:2026-10': true } });
+  assert.equal(rowOn(future, '2026-10-05').bills, 0, 'a bill due later is still excluded when paid');
+  assert.equal(rowOn(unticked, '2026-10-05').bills, 35.99, 'and it is charged when it is not');
+});
+
 test('past days carry no cumulative spend figure, only days still ahead do', () => {
   const plan = runwayPlanner({
     balance: 900,

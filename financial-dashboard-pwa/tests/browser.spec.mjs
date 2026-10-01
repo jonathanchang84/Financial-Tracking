@@ -540,6 +540,17 @@ test('the pay cycle grid shades past days, marks today, and blanks unanchored da
       'exactly one row must be marked today'
     );
 
+    // The column order is a deliberate reading order: the two hypothetical budget
+    // figures sit together, then the money actually going out, then Ending.
+    const headers = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.runway-table thead th')).map((th) => th.textContent.trim())
+    );
+    assert.deepEqual(
+      headers,
+      ['Date', 'Starting', 'Safe to spend', 'Projected cumulative safe spend', 'Spend Items', 'Scheduled bills', 'Ending'],
+      'the runway column order changed'
+    );
+
     assert.deepEqual(errors, [], `console errors: ${JSON.stringify(errors)}`);
   } catch (error) {
     annotateFailure('Browser smoke: the pay cycle grid is not showing past/upcoming/recorded', error?.message || error);

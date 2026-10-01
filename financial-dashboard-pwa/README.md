@@ -39,12 +39,12 @@ provider of any kind.
   recorded on that day. Each day's starting balance comes from the nearest **dated balance record**
   on or before it, carried forward by the bills and Spend Items charged since; a day with no record
   behind it shows an em-dash rather than a figure, so history fills in at the pace it is entered.
-  Safe to Spend is a hypothetical daily amount: the balance after every unpaid bill and Spend Item
-  still due in the cycle, divided by the inclusive number of days in the cycle. The daily figure is
-  therefore identical on every row, the projected cumulative column is that amount times the day
-  number, and its final row equals the cash after bills and Spend Items — so it can never exceed
-  the cash available. It does not reduce Starting or Ending. Saturday and Sunday bill due dates
-  shift to Monday.
+  Safe to Spend is a hypothetical daily amount: the balance after every bill and Spend Item due
+  today or later in the cycle, divided by the inclusive number of days in the cycle. The daily
+  figure is therefore identical on every row, the projected cumulative column is that amount times
+  the day number, and its final row equals the cash after bills and Spend Items — so it can never
+  exceed the cash available. It does not reduce Starting or Ending. Saturday and Sunday bill due
+  dates shift to Monday.
 - Position, investment, and pension updates append SCD Type 2 snapshots (`validFrom`, `validTo`,
   `currentFlag`) under a stable logical id instead of rewriting history. Pension pots can have
   individual annual growth rates, compounded monthly as `(1 + annual rate)^(1/12) - 1`, and the
