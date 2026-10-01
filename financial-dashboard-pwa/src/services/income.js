@@ -113,12 +113,20 @@ export function previousStreamOccurrence(dayOfMonth, from = new Date()) {
 }
 
 /**
- * The pay cycle containing `today`: this payday through the day before the next.
+ * The pay cycle containing `today`: this payday through the next one, inclusive.
  *
  * The cycle is a closed interval anchored on the payday rule rather than on
  * "today", which is what lets the grid show the whole cycle instead of only the
  * part of it that has not happened yet. A pay cycle normally runs 28-31 days,
  * comfortably inside `MAX_RUNWAY_DAYS`.
+ *
+ * The closing payday is *included*. The cycle used to stop the day before it, on
+ * the reasoning that you are paid on the payday and the grid was showing cash up to
+ * the moment before. That quietly excluded anything due on the payday itself: such a
+ * bill was tallied in "Scheduled bills" but never deducted, because it fell outside
+ * the window, so "Balance at payday" was overstated by exactly those amounts while
+ * still looking internally consistent. A bill due on the day you are paid is a bill
+ * you still pay, so the cycle has to run through to the end of it.
  *
  * Returns null without a usable day of month, because the cycle length cannot be
  * derived from a bare date and guessing one would invent a payday the user never
@@ -139,8 +147,7 @@ export function payCycle(dayOfMonth, today = new Date()) {
   afterOpening.setDate(afterOpening.getDate() + 1);
   const closing = nextStreamOccurrence(day, afterOpening);
   if (!closing) return null;
-  const end = new Date(closing.date.getTime());
-  end.setDate(end.getDate() - 1);
+  const end = startOfDay(closing.date);
   if (end < start) return null;
   return { start, end, dayCount: daysBetweenInclusive(start, end) };
 }

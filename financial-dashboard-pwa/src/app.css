@@ -84,6 +84,9 @@ small { color: var(--muted); }
 .muted { color: var(--muted); }
 .error { color: var(--danger); font-size: 0.9rem; }
 .hint { font-size: 0.78rem; color: var(--muted); margin: 0; }
+/* A figure that is quietly incomplete needs saying out loud. Tinted rather than
+   recoloured, so it reads as a note on the card rather than replacing the number. */
+.hint.warn { margin-top: 4px; color: var(--warn, #a16207); }
 .positive { color: var(--positive); }
 .negative { color: var(--danger); }
 

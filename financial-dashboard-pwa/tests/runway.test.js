@@ -294,14 +294,92 @@ test('the grid covers the whole pay cycle when a payday rule is set', () => {
   assert.equal(plan.isCycle, true);
   assert.equal(plan.cycleStart, '2026-10-15');
   // The next payday is the 15th of November, which is a Sunday, so it is brought
-  // back to Friday the 13th and the cycle closes the day before that.
-  assert.equal(plan.cycleEnd, '2026-11-12', 'the day before the weekend-shifted payday');
-  assert.equal(plan.dayCount, 29, '15 Oct through 12 Nov inclusive');
-  assert.equal(plan.rows.length, 29);
+  // back to Friday the 13th. The cycle runs *through* the closing payday, not up to
+  // the day before it: a bill due on the payday is still a bill that has to be paid,
+  // and stopping short of it silently omitted those bills from "Balance at payday".
+  assert.equal(plan.cycleEnd, '2026-11-13', 'the weekend-shifted payday itself');
+  assert.equal(plan.dayCount, 30, '15 Oct through 13 Nov inclusive');
+  assert.equal(plan.rows.length, 30);
   assert.equal(plan.rows[0].date, '2026-10-15');
-  assert.equal(plan.rows.at(-1).date, '2026-11-12');
+  assert.equal(plan.rows.at(-1).date, '2026-11-13');
   // "Days until payday" still counts to the real payday, not to the cycle end.
   assert.equal(plan.daysUntilPayday, 11);
+});
+
+test('a bill due on the payday itself is deducted, not tallied and forgotten', async () => {
+  // The reported defect: the cycle stopped the day before payday, so a bill due on
+  // the payday was counted in "Scheduled bills" but never deducted, leaving "Balance
+  // at payday" overstated while every figure still looked self-consistent.
+  const plan = runwayPlanner({
+    balance: 1758.04,
+    currency: 'GBP',
+    payday: '2026-10-23',
+    paydayDayOfMonth: 23,
+    today: '2026-10-01',
+    balanceHistory: [{ id: 'b', date: '2026-10-01', amount: 1758.04, currencyCode: 'GBP' }],
+    bills: [
+      { id: 'council', name: 'Council Tax', amount: 162.31, dueDay: 5, currencyCode: 'GBP' },
+      { id: 'payday', name: 'Due on payday', amount: 84.51, dueDay: 23, currencyCode: 'GBP' }
+    ],
+    commitments: []
+  });
+  assert.equal(plan.cycleEnd, '2026-10-23', 'the cycle reaches the payday itself');
+  // `scheduledBills` is the whole cycle, so the payday bill appears twice — on the
+  // cycle's opening payday and on its closing one. What is deducted from today is the
+  // second occurrence only, which is `remainingObligations`.
+  assert.equal(plan.remainingObligations, 246.82, 'both bills are still to come');
+  assert.equal(plan.projectedAtPayday, 1511.22, '1758.04 less both bills, including the payday one');
+  assert.equal(plan.rows.at(-1).ending, plan.projectedAtPayday, 'and the closing row agrees');
+  assert.equal(plan.excluded.hasExcluded, false, 'nothing is being quietly left out');
+  // Every day of the budget, inclusive, so the cumulative still lands on the pot.
+  assert.equal(plan.budgetDays, 23, '1 Oct through 23 Oct inclusive');
+  assert.equal(plan.rows.at(-1).cumulativeSafeSpend, plan.safeTotal);
+});
+
+test('a bill due after payday is left for the next cycle, not counted as missing', () => {
+  // Correct scoping rather than a defect: you are paid on the 23rd, so a bill due on
+  // the 25th is not part of "balance at payday" and belongs to the next cycle.
+  const plan = runwayPlanner({
+    balance: 1758.04,
+    currency: 'GBP',
+    payday: '2026-10-23',
+    paydayDayOfMonth: 23,
+    today: '2026-10-01',
+    balanceHistory: [{ id: 'b', date: '2026-10-01', amount: 1758.04, currencyCode: 'GBP' }],
+    bills: [{ id: 'late', name: 'Due later', amount: 100, dueDay: 25, currencyCode: 'GBP' }],
+    commitments: []
+  });
+  assert.equal(plan.projectedAtPayday, 1758.04, 'not due before payday, so not deducted');
+  assert.equal(plan.excluded.hasExcluded, false, 'and not reported as missing either');
+});
+
+test('bills in another currency are reported rather than silently dropped', () => {
+  // A foreign-currency bill can never be summed against this balance, and it never
+  // appears in any cycle, so "Scheduled bills" can look complete while omitting it.
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'GBP',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [{ id: 'b', date: '2026-10-20', amount: 900, currencyCode: 'GBP' }],
+    bills: [
+      { id: 'home', amount: 100, dueDay: 27, currencyCode: 'GBP' },
+      { id: 'us', amount: 60, dueDay: 27, currencyCode: 'USD' }
+    ],
+    commitments: [{ id: 'fx', date: '2026-10-25', amount: 40, currencyCode: 'EUR' }]
+  });
+  assert.equal(plan.scheduledBills, 100, 'only the matching currency is summed');
+  assert.equal(plan.excluded.billsInOtherCurrencies, 1);
+  assert.equal(plan.excluded.billsInOtherCurrenciesAmount, 60);
+  assert.equal(plan.excluded.commitmentsInOtherCurrencies, 1);
+  assert.equal(plan.excluded.hasExcluded, true, 'so the view can say the figure is partial');
+});
+
+test('nothing is reported as excluded when every bill matches the balance currency', () => {
+  const plan = runwayPlanner({ ...base, bills: [{ id: 'e', amount: 100, dueDay: 5, currencyCode: 'USD' }] });
+  assert.equal(plan.excluded.hasExcluded, false);
+  assert.equal(plan.excluded.billsInOtherCurrencies, 0);
 });
 
 test('a payday today opens the cycle rather than collapsing it', () => {
@@ -316,10 +394,11 @@ test('a payday today opens the cycle rather than collapsing it', () => {
     commitments: []
   });
   assert.equal(plan.cycleStart, '2026-10-15');
-  // 15 November 2026 is a Sunday, so that payday lands on Friday the 13th.
-  assert.equal(plan.cycleEnd, '2026-11-12');
-  assert.equal(plan.dayCount, 29);
-  assert.equal(plan.rows.length, 29);
+  // 15 November 2026 is a Sunday, so that payday lands on Friday the 13th, and the
+  // cycle now runs through it.
+  assert.equal(plan.cycleEnd, '2026-11-13');
+  assert.equal(plan.dayCount, 30);
+  assert.equal(plan.rows.length, 30);
   assert.equal(plan.rows[0].isToday, true, 'payday itself is today, not the past');
 });
 
@@ -345,8 +424,9 @@ test('rows are flagged past, today or upcoming from the grid, not re-derived in 
   const flags = plan.rows.map((row) => (row.isPast ? 'past' : row.isToday ? 'today' : 'upcoming'));
   assert.equal(flags.filter((flag) => flag === 'past').length, 5, '15 Oct to 19 Oct');
   assert.equal(flags.filter((flag) => flag === 'today').length, 1, 'exactly one today');
-  // 21 Oct through the 12th, the day before the weekend-shifted next payday.
-  assert.equal(flags.filter((flag) => flag === 'upcoming').length, 23);
+  // 21 Oct through the 13th, the weekend-shifted next payday, which the cycle now
+  // includes so a bill due that day is deducted rather than missed.
+  assert.equal(flags.filter((flag) => flag === 'upcoming').length, 24);
   assert.equal(plan.pastDays, 5);
   assert.equal(plan.todayIndex, 5);
 });
@@ -469,7 +549,7 @@ test('on a cycle view the undated balance anchors today and leaves earlier days 
   assert.equal(byDate.get('2026-10-20').starting, 900, 'today carries the real balance');
   assert.equal(byDate.get('2026-10-20').isRecorded, false, 'but is not badged as a dated record');
   assert.equal(plan.safeDaily, 900 / plan.budgetDays, 'the budget runs from today forward');
-  assert.equal(plan.budgetDays, 24, '20 Oct to 12 Nov inclusive');
+  assert.equal(plan.budgetDays, 25, '20 Oct to 13 Nov inclusive');
 });
 
 test('an explicit record for today wins over the undated balance', () => {
@@ -503,9 +583,9 @@ test('the budget pot is measured from today, never double-counting a past charge
   assert.equal(plan.cashAfterPlannedSpend, 900, 'the pot after the single charge');
   assert.equal(plan.safeTotal, 900);
   // Divided by the days still ahead, not by the whole cycle.
-  assert.equal(plan.budgetDays, 24, 'the budget covers today onward, not the full cycle');
-  assert.equal(plan.dayCount, 29, 'the grid still spans the whole cycle');
-  assert.equal(plan.safeDaily, 900 / 24, 'one division by the remaining day count');
+  assert.equal(plan.budgetDays, 25, 'the budget covers today onward, not the full cycle');
+  assert.equal(plan.dayCount, 30, 'the grid still spans the whole cycle');
+  assert.equal(plan.safeDaily, 900 / 25, 'one division by the remaining day count');
   // The closing row's cumulative safe spend and ending balance meet at the pot.
   const last = plan.rows.at(-1);
   assert.equal(last.cumulativeSafeSpend, 900);
@@ -526,21 +606,24 @@ test('the payday headline and the closing table row are the same figure', () => 
       { id: 'b1', date: '2026-09-25', amount: 1808.06, currencyCode: 'GBP' },
       { id: 'b2', date: '2026-10-01', amount: 1758.04, currencyCode: 'GBP' }
     ],
-    bills: [{ id: 'council', name: 'Council Tax', amount: 162.31, dueDay: 5, currencyCode: 'GBP' }],
+    bills: [
+      { id: 'council', name: 'Council Tax', amount: 162.31, dueDay: 5, currencyCode: 'GBP' },
+      { id: 'payday', name: 'Due on payday', amount: 84.51, dueDay: 23, currencyCode: 'GBP' }
+    ],
     commitments: [{ id: 'food', name: 'Food', date: '2026-09-30', amount: 50.02, currencyCode: 'GBP' }]
   });
   const last = plan.rows.at(-1);
   assert.equal(plan.projectedAtPayday, last.ending, 'the cards and the table cannot disagree');
   assert.equal(plan.cashAfterPlannedSpend, last.ending, 'nor can the two cash cards');
-  assert.equal(plan.projectedAtPayday, 1595.73, '1758.04 today, less the 162.31 bill still to come');
+  assert.equal(plan.projectedAtPayday, 1511.22, '1758.04 less both bills, including the one due on payday');
   // The 50.02 already spent on 30 Sep is inside today's balance, so it is not
   // subtracted from it a second time. Reading it as 1545.71 is what the old
   // earliest-anchor pot produced.
   assert.notEqual(plan.projectedAtPayday, 1545.71);
-  assert.equal(plan.budgetDays, 22, 'divided across the days still ahead, not the 30-day cycle');
-  assert.equal(plan.dayCount, 30, 'the grid still spans the whole cycle');
-  assert.equal(Math.round(plan.safeDaily * 100) / 100, 72.53);
-  assert.equal(Math.round(plan.safeDaily * plan.budgetDays * 100) / 100, 1595.73, 'daily x days lands on the pot');
+  assert.equal(plan.budgetDays, 23, 'divided across the days still ahead, through payday itself');
+  assert.equal(plan.dayCount, 31, 'the grid spans the whole cycle, including the payday');
+  assert.equal(Math.round(plan.safeDaily * 100) / 100, 65.71);
+  assert.equal(Math.round(plan.safeDaily * plan.budgetDays * 100) / 100, 1511.22, 'daily x days lands on the pot');
 });
 
 test('a past bill is still shown and still steps the balance down', () => {

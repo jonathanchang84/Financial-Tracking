@@ -119,7 +119,7 @@
     <article class="fh-metric">
       <p class="eyebrow">BALANCE AT PAYDAY</p>
       <strong>{inDisplay(plan.projectedAtPayday)}</strong>
-      <p class="hint">After bills and Spend Items; hypothetical Safe to Spend is not deducted</p>
+      <p class="hint">After every bill and Spend Item due up to payday; hypothetical Safe to Spend is not deducted</p>
     </article>
     <article class="fh-metric">
       <p class="eyebrow">INVESTMENTS</p>

@@ -413,6 +413,31 @@ export function buildDailyRunway({
 }
 
 /**
+ * Bills and Spend Items this grid can never count, and why.
+ *
+ * Anything merely falling due after the window is not reported: a monthly bill's next
+ * occurrence always lands beyond payday, and that is correct scoping rather than a
+ * gap — it is captured in the next cycle, and you are paid before it falls due.
+ *
+ * What genuinely vanishes is anything in another currency. It is filtered out of the
+ * balance-currency runway and never appears in any cycle, so "Scheduled bills" can
+ * read as complete while omitting it entirely. Saying so is the difference between a
+ * complete figure and a quietly partial one.
+ */
+function runwayExcluded({ bills, commitments, currency }) {
+  const foreignBills = bills.filter((bill) => bill.active !== false && !inCurrency(bill, currency));
+  const foreignCommitments = commitments.filter((item) => !inCurrency(item, currency));
+  return {
+    billsInOtherCurrencies: foreignBills.length,
+    billsInOtherCurrenciesAmount: foreignBills.reduce((sum, bill) => sum + num(bill.amount), 0),
+    commitmentsInOtherCurrencies: foreignCommitments.length,
+    commitmentsInOtherCurrenciesAmount: foreignCommitments.reduce((sum, item) => sum + num(item.amount), 0),
+    // Only worth surfacing when something is actually missing.
+    hasExcluded: foreignBills.length > 0 || foreignCommitments.length > 0
+  };
+}
+
+/**
  * The one place the Safe to Spend budget is derived.
  *
  * `pot` is measured from today's anchor: the balance on or before today, minus every
@@ -549,7 +574,10 @@ export function runwayPlanner({
     obligationTotal: obligations.total,
     // Only what is still ahead of today, so the Safe to Spend copy does not quote
     // charges that have already been paid as if they were still reserved.
-    remainingObligations: obligations.remainingTotal
+    remainingObligations: obligations.remainingTotal,
+    // What this grid deliberately does not count, so a view can say so rather than
+    // presenting an incomplete total as if it were complete.
+    excluded: runwayExcluded({ bills, commitments, currency })
   };
 }
 

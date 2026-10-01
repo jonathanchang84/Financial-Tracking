@@ -42,6 +42,16 @@
   <article class="fh-metric">
     <p class="eyebrow">BALANCE AT PAYDAY</p>
     <strong class:negative={plan.projectedAtPayday < 0}>{inDisplay(plan.projectedAtPayday)}</strong>
-    <p class="hint">After bills and Spend Items only; Safe to Spend is hypothetical</p>
+    <p class="hint">After every bill and Spend Item due up to payday; Safe to Spend is hypothetical</p>
+    {#if plan.excluded?.hasExcluded}
+      <p class="hint warn">
+        {#if plan.excluded.billsInOtherCurrencies > 0}
+          {plan.excluded.billsInOtherCurrencies} bill(s) in another currency are not counted here.
+        {/if}
+        {#if plan.excluded.commitmentsInOtherCurrencies > 0}
+          {plan.excluded.commitmentsInOtherCurrencies} Spend Item(s) in another currency are not counted here.
+        {/if}
+      </p>
+    {/if}
   </article>
 </div>
