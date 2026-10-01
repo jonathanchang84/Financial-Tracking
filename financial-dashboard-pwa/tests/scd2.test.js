@@ -91,6 +91,26 @@ test('series with the same name but different currencies keep separate chains', 
   assert.equal(plan.insert.currencyCode, 'GBP');
 });
 
+test('the asset/liability kind is carried onto the history row', () => {
+  // `kind` only ever lived on the current entry, so the history trail lost it and a
+  // mortgage was drawn as a positive asset in the chart and the table.
+  const plan = planValuation({
+    rows: [],
+    id: 'liab-1',
+    series: 'Mortgage',
+    date: '2026-04-01',
+    value: 150000,
+    currency: 'GBP',
+    kind: 'Liability'
+  });
+  assert.equal(plan.insert.kind, 'liability', 'normalised to lower case for comparison');
+});
+
+test('kind is optional, so holdings and pensions are unaffected', () => {
+  const plan = planValuation({ rows: [], id: 'h1', series: 'Index Fund', date: '2026-04-01', value: 5000 });
+  assert.equal(plan.insert.kind, '', 'absent rather than undefined, so the row shape is stable');
+});
+
 test('a brand new series creates a chain and reuses the fallback logical id', () => {
   const plan = planValuation({ rows: [], id: 'fresh-id', series: 'New pot', date: '2026-04-01', value: 1000, currency: 'EUR' });
   assert.equal(plan.insert.logicalId, 'fresh-id');

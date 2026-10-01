@@ -33,7 +33,7 @@
         <tr>
           <th scope="col" class="text-cell">{table.granularity === 'year' ? 'Year' : 'Month'}</th>
           {#each table.columns as column (column.key)}
-            <th scope="col" class="text-cell" title={`${column.name} (${column.currency})`}>{column.name}<small>{column.currency}</small></th>
+            <th scope="col" class="text-cell" class:negative={column.kind === 'liability'} title={`${column.name} (${column.currency})`}>{column.name}<small>{column.currency}</small></th>
             <th scope="col">% change</th>
           {/each}
         </tr>
@@ -44,7 +44,8 @@
             <th scope="row" class="text-cell">{bucketLabel(row.bucket)}</th>
             {#each table.columns as column (column.key)}
               {@const cell = row.cells[column.key]}
-              <td class="value-cell">{valueLabel(cell?.value)}</td>
+              {@const isLiability = column.kind === 'liability'}
+              <td class="value-cell" class:negative={isLiability && (cell?.value ?? 0) < 0}>{valueLabel(cell?.value)}</td>
               <td class="change-cell" class:positive={cell?.change != null && cell.change > 0} class:negative={cell?.change != null && cell.change < 0}>{changeLabel(cell?.change)}</td>
             {/each}
           </tr>

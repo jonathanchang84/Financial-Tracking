@@ -107,6 +107,89 @@ const VIEWS = [
   ['#budgets', 'Budgets']
 ];
 
+/**
+ * The headline NET WORTH figure must count holdings and pensions, not accounts
+ * alone. The tiles below it show those separately, so a total that omits them
+ * reads as though the money does not exist.
+ *
+ * Seeded through the app's own IndexedDB, then read back off the rendered tile.
+ */
+test('net worth totals accounts, investments and pensions', async () => {
+  const { context, page, errors } = await openPage();
+  try {
+    await gotoApp(page, '#/');
+    await page.waitForSelector('main.content', { timeout: 20_000 });
+
+    // Seeded in USD, which is the default display currency, so no rate conversion
+    // happens and the total is exact. The unit tests cover conversion; pinning it
+    // here would make this test fail on a legitimate rate change instead of on a
+    // broken total.
+    //
+    // Values chosen so a total that silently drops a store is unmistakable rather
+    // than a few percent out, and a liability is included so its sign is checked.
+    // 1,000,000 asset - 309,216 mortgage + 900,000 holding + 5,000 pension.
+    await seedHistory(page, {
+      store: 'netWorthEntries',
+      rows: [
+        { id: 'nw-asset', name: 'Main Account', kind: 'Asset', value: 1000000, currencyCode: 'USD', currentFlag: true, validFrom: '2026-09-24', validTo: null },
+        { id: 'nw-mortgage', name: 'Mortgage', kind: 'Liability', value: 309216, currencyCode: 'USD', currentFlag: true, validFrom: '2026-09-24', validTo: null }
+      ]
+    });
+    await seedHistory(page, {
+      store: 'holdings',
+      rows: [
+        { id: 'h-1', name: 'Big Fund', symbol: 'BIG', type: 'Equity', quantity: 1, price: 900000, currencyCode: 'USD', currentFlag: true, validFrom: '2026-09-24', validTo: null }
+      ]
+    });
+    await seedHistory(page, {
+      store: 'pensions',
+      rows: [
+        { id: 'p-1', name: 'Work Pension', value: 5000, currencyCode: 'USD', currentFlag: true, validFrom: '2026-09-24', validTo: null }
+      ]
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.fh-metric', { timeout: 20_000 });
+
+    // Read the rendered tiles rather than the store, so this checks what a user
+    // actually sees. Each tile is found by its own label to avoid positional
+    // coupling to the grid order.
+    const tileValue = async (label) => {
+      const text =
+        (await page.locator('.fh-metric', { hasText: label }).first().locator('strong').textContent()) || '';
+      return { text, digits: Number((text.match(/[\d,]+(?:\.\d+)?/) || ['0'])[0].replace(/,/g, '')) };
+    };
+
+    const netWorth = await tileValue('NET WORTH');
+    const investments = await tileValue('INVESTMENTS');
+    const pensions = await tileValue('PENSIONS');
+
+    // The component tiles are unchanged by this fix; only the total is new.
+    assert.equal(investments.digits, 900000, `INVESTMENTS should be 900,000, got "${investments.text}"`);
+    assert.equal(pensions.digits, 5000, `PENSIONS should be 5,000, got "${pensions.text}"`);
+
+    // 1,000,000 - 309,216 + 900,000 + 5,000. Accounts-only would read 690,784, so
+    // dropping the holding or the pots fails by 900,000 rather than marginally.
+    assert.equal(
+      netWorth.digits,
+      1595784,
+      `NET WORTH should be 1,595,784 (asset minus liability, plus holdings and pensions), got "${netWorth.text}"`
+    );
+
+    // The currency panel must describe the same total, not accounts alone.
+    assert.equal(
+      await page.locator('.panel', { hasText: 'Total wealth by currency' }).count(),
+      1,
+      'the currency panel should be titled for total wealth'
+    );
+    assert.deepEqual(errors, [], 'the dashboard logged console errors');
+  } catch (error) {
+    annotateFailure('Net worth did not total all three stores', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
 test('the app boots and every screen renders without a console error', async () => {
   for (const [hash, label] of VIEWS) {
     const { context, page, errors } = await openPage();
@@ -207,7 +290,13 @@ test('the position charts stack bars with a zero-based axis and selectable serie
     assert.match(cell2022 || '', /2022/, 'the year row is labelled by year');
     const totals = await page.locator('.trend-total').allTextContents();
     assert.equal(totals.length, 2, `one total per year, got ${JSON.stringify(totals)}`);
-    assert.ok(/^[\d.]+[kbm]?$/.test(totals[0]), `total is not a readable value: ${totals[0]}`);
+    // Labelled and in full currency, not the abbreviated axis format: a total is
+    // the figure a reader actually wants, so it is not squeezed to "88.1k".
+    // The symbol is whatever the display currency is, so only the shape is pinned.
+    assert.match(totals[0], /^Net Value: \S/, `the total is not labelled: "${totals[0]}"`);
+    assert.match(totals[0], /Net Value: [^\d-]*[\d,]+/, `the total is not a currency figure: "${totals[0]}"`);
+    // Assets minus liabilities, so the label reports a net figure and can be negative.
+    assert.match(totals[1], /^Net Value: \S/, `"${totals[1]}"`);
 
     // The table follows the same toggle as the chart, and says which unit it is in.
     assert.equal(await page.locator('.monthly-history-table thead th').first().textContent(), 'Year');
@@ -246,6 +335,94 @@ test('the position charts stack bars with a zero-based axis and selectable serie
     assert.ok(await page.locator('.series-toggle input:not(:checked)').count() >= 1, 'the toggle should stay unchecked');
   } catch (error) {
     annotateFailure('Browser smoke: the stacked bar chart is wrong', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
+test('net worth stacks assets above the axis and liabilities below it', async () => {
+  const { context, page } = await openPage();
+  try {
+    // An asset and a liability recorded in the same month, so one bar has to
+    // carry segments on both sides of the zero line.
+    const rows = [
+      { id: 'nw-a1', logicalId: 'cash', series: 'Cash', date: '2026-03-31', value: 20000, kind: 'Asset' },
+      { id: 'nw-a2', logicalId: 'house', series: 'House', date: '2026-03-31', value: 300000, kind: 'Asset' },
+      { id: 'nw-l1', logicalId: 'mortgage', series: 'Mortgage', date: '2026-03-31', value: 150000, kind: 'Liability' }
+    ];
+
+    await gotoApp(page, '#position');
+    // The current entries too: the screens fall back to them for the kind of any
+    // history row recorded before `kind` was written onto it.
+    await seedHistory(page, { store: 'netWorthEntries', rows: [
+      { id: 'cash', logicalId: 'cash', name: 'Cash', kind: 'Asset', value: 20000, currencyCode: 'GBP' },
+      { id: 'house', logicalId: 'house', name: 'House', kind: 'Asset', value: 300000, currencyCode: 'GBP' },
+      { id: 'mortgage', logicalId: 'mortgage', name: 'Mortgage', kind: 'Liability', value: 150000, currencyCode: 'GBP' }
+    ] });
+    await seedHistory(page, { store: 'netWorthHistory', rows });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.trend-bar', { timeout: 20_000 });
+
+    // Three segments: two assets stacked up, one liability hanging below.
+    assert.equal(await page.locator('.trend-bar').count(), 3, 'one segment per series');
+
+    // The geometry is the point: assets above the zero line, the liability below.
+    // Both are measured in screen pixels. Taking the rects' raw `y`/`height`
+    // attributes would compare SVG user units against a screen-space zero, which
+    // is meaningless - the viewBox scales them by different factors.
+    const zeroY = await page.locator('.trend-axis-label').evaluateAll((nodes) => {
+      const zero = nodes.find((node) => node.textContent.trim() === '0');
+      if (!zero) return null;
+      const svg = zero.ownerSVGElement;
+      const point = svg.createSVGPoint();
+      point.x = 0;
+      point.y = Number(zero.getAttribute('y')) - 3;
+      return point.matrixTransform(zero.getScreenCTM()).y;
+    });
+    assert.ok(zeroY !== null, 'the axis needs a labelled zero for the two sides to be comparable');
+
+    const edges = await page.locator('.trend-bar').evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom };
+      })
+    );
+    const highest = Math.min(...edges.map((edge) => edge.top));
+    const lowest = Math.max(...edges.map((edge) => edge.bottom));
+    assert.ok(highest < zeroY, `assets should sit above the zero line, highest was ${highest} vs ${zeroY}`);
+    assert.ok(lowest > zeroY, `liabilities should hang below the zero line, lowest was ${lowest} vs ${zeroY}`);
+    // Both assets wholly above the line. The bottom-most asset starts AT zero, so
+    // this is `<=` and not `<`.
+    const aboveCount = edges.filter((edge) => edge.bottom <= zeroY).length;
+    assert.equal(aboveCount, 2, `both assets should be above the line, got ${aboveCount} of ${edges.length}`);
+    // And one wholly below it. The height is checked as well as the position: a
+    // collapsed liability collapses to the 1px minimum the renderer falls back to,
+    // which sits below the line and so satisfies a position-only check while
+    // showing nothing at all.
+    const below = edges.filter((edge) => edge.top >= zeroY);
+    assert.equal(below.length, 1, `the liability should hang below the line, got ${below.length} of ${edges.length}`);
+    assert.ok(
+      below[0].bottom - below[0].top > 20,
+      `the liability should be a visible bar, not a 1px sliver: ${Math.round(below[0].bottom - below[0].top)}px`
+    );
+
+    // The liability is marked in the legend in words, not by colour alone.
+    assert.ok(
+      await page.locator('.series-toggle .series-flag').count() >= 1,
+      'the legend should label the liability'
+    );
+
+    // The net is assets minus liabilities: 20,000 + 300,000 - 150,000.
+    const totals = await page.locator('.trend-total').allTextContents();
+    assert.equal(totals.length, 1, `one net total, got ${JSON.stringify(totals)}`);
+    const net = Number(String(totals[0]).replace(/[^0-9.-]/g, ''));
+    assert.ok(
+      Math.abs(net - 170000) < 1500,
+      `net should be about 170,000 (assets minus liabilities), got ${net} from "${totals[0]}"`
+    );
+  } catch (error) {
+    annotateFailure('Browser smoke: assets and liabilities are not stacked on the correct sides', error?.message || error);
     throw error;
   } finally {
     await context.close();

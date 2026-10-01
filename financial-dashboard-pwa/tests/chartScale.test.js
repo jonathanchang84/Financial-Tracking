@@ -10,6 +10,7 @@ import {
   maxStackTotal,
   niceScale,
   niceStep,
+  stackExtent,
   stackSegments
 } from '../src/services/chartScale.js';
 import { buildMonthlyHistoryTable } from '../src/services/monthlyHistory.js';
@@ -134,8 +135,8 @@ test('missing and unusable values never become a figure or a zero', () => {
   });
   assert.equal(table.rows.length, 1, 'only the one usable bucket survives');
   assert.equal(table.rows[0].bucket, '2024');
-  assert.equal(table.rows[0].cells['a::USD'].value, 1200, 'not coerced to 0');
-  assert.equal(table.rows[0].cells['a::USD'].date, '2024-04-01');
+  assert.equal(table.rows[0].cells['a'].value, 1200, 'not coerced to 0');
+  assert.equal(table.rows[0].cells['a'].date, '2024-04-01');
 
   // No usable rows at all yields an empty pivot rather than throwing.
   const empty = buildMonthlyHistoryTable({
@@ -182,9 +183,9 @@ test('segments stack upward and a missing series is skipped, not zeroed', () => 
     { series: 'c', date: '2023-01-01', value: 999, currencyCode: 'USD' }
   ]);
   const series = [
-    { key: 'a::USD', color: '#1', values: bySeries.get('a::USD') },
-    { key: 'b::USD', color: '#2', values: bySeries.get('b::USD') },
-    { key: 'c::USD', color: '#3', values: bySeries.get('c::USD') }
+    { key: 'a', color: '#1', values: bySeries.get('a') },
+    { key: 'b', color: '#2', values: bySeries.get('b') },
+    { key: 'c', color: '#3', values: bySeries.get('c') }
   ];
   const [stack] = stackSegments({ series, buckets: ['2024'] });
   assert.equal(stack.total, 500, 'c had no 2024 figure, so it is absent rather than zero');
@@ -229,8 +230,8 @@ test('the axis is scaled from stacked totals, so a tall stack is not clipped', (
     { series: 'b', date: '2024-01-01', value: 200, currencyCode: 'USD' }
   ]);
   const series = [
-    { key: 'a::USD', values: bySeries.get('a::USD') },
-    { key: 'b::USD', values: bySeries.get('b::USD') }
+    { key: 'a', values: bySeries.get('a') },
+    { key: 'b', values: bySeries.get('b') }
   ];
   const stacks = stackSegments({ series, buckets: ['2024'] });
   const tallest = maxStackTotal(stacks);
@@ -247,7 +248,7 @@ test('the axis is scaled from stacked totals, so a tall stack is not clipped', (
 
 test('a bucket where every series is missing produces no segments at all', () => {
   const bySeries = closingValues([{ series: 'a', date: '2024-01-01', value: 100, currencyCode: 'USD' }]);
-  const series = [{ key: 'a::USD', values: bySeries.get('a::USD') }];
+  const series = [{ key: 'a', values: bySeries.get('a') }];
   const stacks = stackSegments({ series, buckets: ['2024', '2025'] });
   assert.equal(stacks.length, 2, 'the empty bucket still holds its slot');
   assert.equal(stacks[1].segments.length, 0);
@@ -259,6 +260,244 @@ test('maxStackTotal copes with no data and with an all-zero stack', () => {
   assert.equal(maxStackTotal([]), 0);
   assert.equal(maxStackTotal([{ total: 0 }, { total: 0 }]), 0);
   assert.equal(maxStackTotal([{ total: 5 }, { total: 90 }, { total: 12 }]), 90);
+});
+
+/** `values` is keyed by bucket, which is what stackSegments reads. */
+const at = (bucket, value) => new Map([[bucket, { value }]]);
+
+test('assets stack above the axis and liabilities below it', () => {
+  const series = [
+    { key: 'cash', values: at('2026-09', 20000) },
+    { key: 'house', values: at('2026-09', 50000) },
+    { key: 'mortgage', values: at('2026-09', -150000) },
+    { key: 'car', values: at('2026-09', -8000) }
+  ];
+  const [stack] = stackSegments({ series, buckets: ['2026-09'] });
+
+  // Assets climb from zero; liabilities descend from it.
+  assert.deepEqual(
+    stack.segments.map((s) => [s.from, s.to]),
+    [[0, 20000], [20000, 70000], [-150000, 0], [-158000, -150000]]
+  );
+  assert.equal(stack.segments[2].side, 'liability');
+  assert.equal(stack.segments[0].side, 'asset');
+  assert.equal(stack.top, 70000, 'the positive ceiling');
+  assert.equal(stack.bottom, -158000, 'the negative floor, and it must be negative');
+  assert.equal(stack.net, -88000, 'assets minus liabilities');
+});
+
+test('a liability does not drag the assets drawn after it', () => {
+  // The single-accumulator bug: a negative value pulled the running baseline down,
+  // so every segment after a liability was drawn at the wrong height.
+  const series = [
+    { key: 'mortgage', values: at('2026-09', -150000) },
+    { key: 'cash', values: at('2026-09', 20000) }
+  ];
+  const [stack] = stackSegments({ series, buckets: ['2026-09'] });
+  const cash = stack.segments.find((s) => s.key === 'cash');
+  assert.equal(cash.from, 0, 'an asset always starts at the zero line');
+  assert.equal(cash.to, 20000);
+  assert.equal(stack.top, 20000);
+  assert.equal(stack.bottom, -150000);
+});
+
+test('every segment is renderer-safe: from is below to, even going downward', () => {
+  const series = [
+    { key: 'a', values: at('2026-09', 300) },
+    { key: 'b', values: at('2026-09', -900) }
+  ];
+  const [stack] = stackSegments({ series, buckets: ['2026-09'] });
+  // The renderer computes y from `to` and height from `from - to`; if that
+  // assumption breaks on a downward segment, the bar is drawn inside out.
+  for (const segment of stack.segments) {
+    assert.ok(segment.from < segment.to, `${segment.key}: from must be below to`);
+  }
+});
+
+test('an all-assets chart stacks exactly as it did before the two-sided change', () => {
+  const series = [
+    { key: 'a', values: at('2026-09', 300) },
+    { key: 'b', values: at('2026-09', 200) }
+  ];
+  const [stack] = stackSegments({ series, buckets: ['2026-09'] });
+  assert.deepEqual(stack.segments.map((s) => [s.from, s.to]), [[0, 300], [300, 500]]);
+  assert.equal(stack.net, 500);
+  assert.equal(stack.bottom, 0, 'no liability means nothing below the axis');
+});
+
+test('a bucket with only liabilities hangs entirely below the axis', () => {
+  const [stack] = stackSegments({ series: [{ key: 'mortgage', values: at('2026-09', -150000) }], buckets: ['2026-09'] });
+  assert.equal(stack.top, 0);
+  assert.equal(stack.bottom, -150000);
+  assert.equal(stack.net, -150000);
+});
+
+test('the axis spans both sides of zero, and always includes a zero tick', () => {
+  const series = [
+    { key: 'cash', values: at('2026-09', 70000) },
+    { key: 'mortgage', values: at('2026-09', -158000) }
+  ];
+  const stacks = stackSegments({ series, buckets: ['2026-09'] });
+  const { min, max } = stackExtent(stacks);
+  assert.equal(min, -158000);
+  assert.equal(max, 70000);
+
+  const scale = niceScale([min, max], { floorAtZero: true });
+  assert.ok(scale.min <= -158000, 'the axis must reach the deepest liability');
+  assert.ok(scale.max >= 70000, 'the axis must reach the tallest asset');
+  assert.ok(scale.ticks.some((tick) => tick.value === 0), 'zero has to be a labelled tick');
+
+  // Scaling from the net alone is the trap: -88000 would clip the assets.
+  const fromNet = niceScale([stacks[0].net], { floorAtZero: true });
+  assert.ok(fromNet.max < 70000, 'the net alone would clip the asset side');
+});
+
+test('a chart with no liabilities still starts its axis at exactly zero', () => {
+  // The extent always includes zero so the two sides share a baseline, but that
+  // zero must not be treated as padding room: rounding a padded -11,400 down to
+  // a 100k step put the floor at -100k for a chart whose lowest value was 0.
+  const allAssets = [
+    { key: 'a', values: at('2026-09', 100000) },
+    { key: 'b', values: at('2026-09', 128000) }
+  ];
+  const { min, max } = stackExtent(stackSegments({ series: allAssets, buckets: ['2026-09'] }));
+  assert.equal(min, 0);
+  const scale = niceScale([min, max], { floorAtZero: true });
+  assert.equal(scale.min, 0, `an all-assets axis must start at zero, got ${scale.min}`);
+  assert.ok(scale.max >= 128000, 'and still reach the tallest stack');
+  assert.equal(scale.ticks[0].value, 0);
+
+  // The same has to hold for a flat single-value series.
+  const flat = niceScale([70000], { floorAtZero: true });
+  assert.equal(flat.min, 0, 'a flat all-assets axis must start at zero too');
+  assert.ok(flat.max > 70000, 'but must still have room to show the value');
+
+  // And a chart that does have a liability must still go below zero.
+  const withLiability = niceScale([-150000, 70000], { floorAtZero: true });
+  assert.ok(withLiability.min < 0, 'a real negative floor is not clamped away');
+});
+
+test('stackExtent starts at zero when there is nothing negative or nothing positive', () => {
+  assert.deepEqual(stackExtent([]), { min: 0, max: 0 });
+  assert.deepEqual(stackExtent([{ top: 500, bottom: 0 }]), { min: 0, max: 500 });
+  assert.deepEqual(stackExtent([{ top: 0, bottom: -500 }]), { min: -500, max: 0 });
+  // The most negative bucket wins, not the last one.
+  assert.deepEqual(stackExtent([{ top: 0, bottom: -900 }, { top: 0, bottom: -100 }]), { min: -900, max: 0 });
+});
+
+test('one holding recorded twice in different currencies is a single series, not two', () => {
+  // The double-count: currency belongs to a version, not to the series, so keying
+  // on name + currency split a re-keyed holding into two stacked segments.
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'v1', logicalId: 'L1', series: 'UBS AG', date: '2026-09-20', value: 1000, currencyCode: 'USD' },
+      { id: 'v2', logicalId: 'L1', series: 'UBS AG', date: '2026-09-26', value: 1200, currencyCode: 'GBP' }
+    ],
+    granularity: 'month'
+  });
+  assert.equal(table.columns.length, 1, 'one column, so the bar is not double counted');
+  assert.equal(table.columns[0].currency, 'GBP', 'labelled with the currency now in force');
+  const cell = table.rows.at(-1).cells[table.columns[0].key];
+  assert.equal(cell.value, 1200, 'and the closing value, not both');
+});
+
+test('a position added twice is counted once, using the later version', () => {
+  // This is the live double-count. Adding a holding again mints a new entity id and
+  // so starts a second version chain, and nothing closes the first one off - both
+  // rows claim to be current. Keyed on the id, the same position is stacked twice.
+  // One name is one position, so the later snapshot wins.
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'r1', logicalId: 'chain-a', series: 'UBS AG', date: '2026-09-24', value: 18580.8, currencyCode: 'CHF' },
+      { id: 'r2', logicalId: 'chain-b', series: 'UBS AG', date: '2026-09-26', value: 17827.48, currencyCode: 'GBP' },
+      { id: 'r3', logicalId: 'chain-a', series: 'UBS AG', date: '2026-09-26', value: 19584, currencyCode: 'CHF' }
+    ],
+    granularity: 'month'
+  });
+  assert.equal(table.columns.length, 1, 'one column for one position, not two');
+  assert.equal(table.columns[0].currency, 'CHF', 'labelled with the later currency');
+  const cell = table.rows.at(-1).cells[table.columns[0].key];
+  assert.equal(cell.value, 19584, 'the latest snapshot, not the sum of both chains');
+});
+
+test('a position added twice in the same bucket still resolves to the latest', () => {
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'r1', logicalId: 'chain-a', series: 'Fund X', date: '2026-09-01', value: 100, currencyCode: 'GBP' },
+      { id: 'r2', logicalId: 'chain-b', series: 'Fund X', date: '2026-09-20', value: 250, currencyCode: 'GBP' }
+    ],
+    granularity: 'month'
+  });
+  assert.equal(table.columns.length, 1);
+  assert.equal(table.rows[0].cells[table.columns[0].key].value, 250);
+});
+
+test('other holdings are unaffected by a duplicate series', () => {
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'r1', logicalId: 'a', series: 'UBS AG', date: '2026-09-24', value: 100, currencyCode: 'CHF' },
+      { id: 'r2', logicalId: 'b', series: 'UBS AG', date: '2026-09-26', value: 150, currencyCode: 'CHF' },
+      { id: 'r3', logicalId: 'c', series: 'Barclays Fund', date: '2026-09-26', value: 846.83, currencyCode: 'GBP' }
+    ],
+    granularity: 'month'
+  });
+  assert.equal(table.columns.length, 2, 'the duplicate collapses, the other holding does not');
+});
+
+test('rows written before logical ids existed still group by name and currency', () => {
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'a', series: 'Old Fund', date: '2026-08-01', value: 100, currencyCode: 'GBP' },
+      { id: 'b', series: 'Old Fund', date: '2026-09-01', value: 250, currencyCode: 'GBP' }
+    ],
+    granularity: 'month'
+  });
+  assert.equal(table.columns.length, 1, 'the legacy fallback keeps them in one column');
+  assert.equal(table.columns[0].key, 'Old Fund');
+  assert.equal(table.rows.at(-1).cells['Old Fund'].value, 250, 'closing value for September');
+});
+
+test('a liability is negative in the pivot, and the kind reaches the column', () => {
+  const rows = [
+    { id: 'c', logicalId: 'A1', series: 'Cash', date: '2026-09-01', value: 20000, kind: 'Asset' },
+    { id: 'm', logicalId: 'L1', series: 'Mortgage', date: '2026-09-01', value: 150000, kind: 'Liability' }
+  ];
+  const sign = (row) => (String(row.kind).toLowerCase() === 'liability' ? -row.value : row.value);
+  const table = buildMonthlyHistoryTable({ rows, readValue: sign, granularity: 'month' });
+
+  const cash = table.columns.find((c) => c.name === 'Cash');
+  const mortgage = table.columns.find((c) => c.name === 'Mortgage');
+  assert.equal(table.rows[0].cells[cash.key].value, 20000, 'an asset stays positive');
+  assert.equal(table.rows[0].cells[mortgage.key].value, -150000, 'a liability is negative');
+  assert.equal(mortgage.kind, 'liability', 'so the legend can mark it');
+  assert.equal(cash.kind, 'asset');
+});
+
+test('kind is resolved from the entity store when a history row has none', () => {
+  // Rows recorded before `kind` was written onto history carry none, which is why
+  // a mortgage used to be drawn as a positive asset.
+  const table = buildMonthlyHistoryTable({
+    rows: [{ id: 'm', logicalId: 'L1', series: 'Mortgage', date: '2026-09-01', value: 150000 }],
+    granularity: 'month',
+    resolveKind: (row) => (row.series === 'Mortgage' ? 'liability' : 'asset')
+  });
+  assert.equal(table.columns[0].kind, 'liability', 'the caller fallback is used');
+});
+
+test('a liability shrinking shows a fall, not a rise', () => {
+  // (value - previous) / previous with two negatives would divide by a negative
+  // and invert the sign; the divisor is absolute so a smaller debt reads as down.
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'a', logicalId: 'L1', series: 'Mortgage', date: '2026-08-01', value: -150000 },
+      { id: 'b', logicalId: 'L1', series: 'Mortgage', date: '2026-09-01', value: -140000 }
+    ],
+    readValue: (row) => row.value,
+    granularity: 'month'
+  });
+  const change = table.rows.at(-1).cells[table.columns[0].key].change;
+  assert.ok(change < 0, `paying down a debt is a fall, got ${change}`);
+  assert.ok(Math.abs(change - -6.667) < 0.01, `expected about -6.7%, got ${change}`);
 });
 
 test('x-axis labels thin out instead of colliding', () => {

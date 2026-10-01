@@ -365,6 +365,47 @@ export const investmentsTotal = derived([holdings, displayCurrency], ([$rows]) =
 export const pensionsTotal = derived([pensions, displayCurrency], ([$rows]) =>
   sumInDisplay($rows, (row) => num(row.value))
 );
+
+/**
+ * Headline net worth: accounts + investments + pensions.
+ *
+ * The NET WORTH tile previously showed accounts only, so holdings and pots were
+ * listed as separate tiles but never counted in the total - which made the
+ * headline misleading for anyone whose wealth sits outside cash accounts. All
+ * three inputs are already in the display currency, so this is a plain sum and
+ * needs no further conversion.
+ *
+ * A plain sum is deliberate. `owner_id` is part of the primary key on
+ * `finance_records` and every query is scoped by the session, so one person's
+ * rows can never reach another's figures; there is no cross-store duplication to
+ * guard against and no need for a name-based dedupe rule that would silently
+ * merge a holding with an account of the same name.
+ *
+ * The cash balance is deliberately excluded: `settings.balance` is a figure the
+ * user types in, not a tracked position, and it is already shown on its own tile.
+ */
+export const totalNetWealth = derived(
+  [netWorthTotal, investmentsTotal, pensionsTotal],
+  ([$accounts, $investments, $pensions]) => $accounts + $investments + $pensions
+);
+
+/**
+ * Per-currency breakdown across all three stores, so the dashboard's currency
+ * panel adds up to the headline rather than describing accounts only. Accounts
+ * keep their sign, so a liability shows negative here too.
+ */
+export const wealthTotals = derived(
+  [positionTotals, portfolioTotals, pensionTotals],
+  ([$accounts, $investments, $pensions]) => {
+    const totals = {};
+    for (const source of [$accounts, $investments, $pensions]) {
+      for (const [code, value] of Object.entries(source || {})) {
+        totals[code] = (totals[code] || 0) + value;
+      }
+    }
+    return totals;
+  }
+);
 export const expensesLogged = derived([transactions, displayCurrency], ([$rows]) =>
   sumInDisplay(
     $rows.filter((row) => row.type === 'expense'),

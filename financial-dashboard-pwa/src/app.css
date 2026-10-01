@@ -102,6 +102,13 @@ small { color: var(--muted); }
 }
 .series-toggle input { accent-color: var(--accent); margin: 0; }
 .series-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A liability is labelled in words as well as drawn below the axis and hatched,
+   so the legend alone is enough to tell the two apart. */
+.series-toggle .series-flag {
+  flex: none; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--danger); border: 1px solid currentColor; border-radius: 999px;
+  padding: 0 5px; line-height: 1.5;
+}
 
 /* Where the exchange rates in the figures came from, and when. A figure that
    silently uses stale rates is worse than one that admits to it. */

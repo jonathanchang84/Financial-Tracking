@@ -124,21 +124,56 @@
    * bar and the cell beside it are always the same number - they cannot drift
    * apart the way a separately-computed peak would have.
    */
+  /**
+   * Asset/liability kind per series name, from the current entries.
+   *
+   * The entity store is the only place `kind` has always lived; the history trail
+   * used to lose it, which is why a mortgage was drawn as a positive asset.
+   */
+  const kindBySeriesName = $derived.by(() => {
+    const map = new Map();
+    if (entityKey !== 'netWorth') return map;
+    for (const row of $store || []) {
+      map.set(String(row?.name || '').trim(), String(row?.kind || '').toLowerCase());
+    }
+    return map;
+  });
+
+  /**
+   * Value of a history row for the chart and the table.
+   *
+   * `signedValue` reads `kind` off the row, and a row recorded before `kind` was
+   * written onto history has none - so a liability came back positive and the bar
+   * counted a mortgage as an asset. The kind is resolved from the row first, then
+   * from the current entry with the same name.
+   */
+  const historyValue = $derived.by(() => {
+    if (entityKey !== 'netWorth') return (row) => num(row.value);
+    return (row) => {
+      const kind = String(row?.kind || kindBySeriesName.get(String(row?.series || row?.name || '').trim()) || '').toLowerCase();
+      return kind === 'liability' ? -num(row.value) : num(row.value);
+    };
+  });
+
   const monthlyHistory = $derived.by(() =>
     buildMonthlyHistoryTable({
       rows: $historyStore || [],
-      readValue: entityKey === 'netWorth' ? signedValue : (row) => num(row.value),
+      readValue: historyValue,
       convert: (value, currency) => convertCurrency(value, currency, $displayCurrency),
-      granularity
+      granularity,
+      // Same fallback as `historyValue`, so the column kind the legend reads
+      // cannot disagree with the sign the value was given.
+      resolveKind: (row) =>
+        String(row?.kind || kindBySeriesName.get(String(row?.series || row?.name || '').trim()) || '').toLowerCase()
     })
   );
 
   /**
    * Series for the chart's visibility toggles. The values themselves come from
-   * the pivot, so this is only names and keys.
+   * the pivot, so this is only names, keys and kinds.
    */
   const trendSeries = $derived(
-    monthlyHistory.columns.map((column) => ({ key: column.key, name: column.name }))
+    monthlyHistory.columns.map((column) => ({ key: column.key, name: column.name, kind: column.kind }))
   );
 
   /**
@@ -404,13 +439,19 @@
         <fieldset class="chart-series">
           <legend class="visually-hidden">Series shown in the chart</legend>
           {#each trendSeries as item (item.key)}
-            <label class="series-toggle">
+            <label class="series-toggle" class:is-liability={item.kind === 'liability'}>
               <input
                 type="checkbox"
                 checked={!hiddenSeries.includes(item.key)}
                 onchange={() => toggleSeries(item.key)}
               />
               <span>{item.name}</span>
+              <!-- Not colour alone: position below the axis and the hatch on the
+                   bar already mark it, and this text says so for anyone reading the
+                   legend rather than the chart. -->
+              {#if item.kind === 'liability'}
+                <span class="series-flag">liability</span>
+              {/if}
             </label>
           {/each}
         </fieldset>

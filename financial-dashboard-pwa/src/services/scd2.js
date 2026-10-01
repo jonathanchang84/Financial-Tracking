@@ -90,7 +90,8 @@ export function planValuation({
   value,
   currency = 'USD',
   logicalId = null,
-  notes = ''
+  notes = '',
+  kind = ''
 }) {
   const effectiveDate = dayKey(date) || dayKey(new Date());
   const name = String(series || '').trim() || 'Item';
@@ -123,6 +124,16 @@ export function planValuation({
       value: Number(value) || 0,
       currencyCode: currency,
       notes: notes || '',
+      // Carried onto the history row so a liability stays negative in the chart
+      // and the table without the reader having to re-derive it. `kind` lives on
+      // the current entry, and the history trail used to lose it entirely - which
+      // is why a mortgage was drawn as a positive asset. Optional, so callers that
+      // have no kind (holdings, pensions) are unaffected.
+      //
+      // Lower-cased on the way in. The entry stores 'Liability' as typed, and every
+      // reader already lower-cases before comparing; writing the canonical form
+      // means a history row is not sensitive to how the value was capitalised.
+      kind: String(kind || '').trim().toLowerCase(),
       validFrom: effectiveDate,
       validTo: null,
       currentFlag: true

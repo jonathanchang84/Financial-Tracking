@@ -26,7 +26,7 @@
     bucketLabel,
     formatAxisValue,
     labelStride,
-    maxStackTotal,
+    stackExtent,
     niceScale,
     stackSegments
   } from '../services/chartScale.js';
@@ -46,6 +46,13 @@
   const plotHeight = height - PLOT.top - PLOT.bottom;
   const SWATCHES = ['#0f766e', '#2563eb', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#65a30d', '#db2777'];
 
+  // A 45-degree hatch, defined once and referenced by every liability segment.
+  // A liability therefore differs from an asset in three independent ways: it
+  // hangs below the zero line, it is marked in the legend, and it is hatched.
+  // Colour alone would fail in greyscale and for anyone who cannot separate the
+  // hues, which is the one case where misreading a liability as an asset matters.
+  const LIABILITY_HATCH = 'url(#liability-hatch)';
+
   /**
    * The pivot is the single source of truth. Each series contributes its own
    * closing value per bucket, straight out of the same rows the table renders.
@@ -63,10 +70,16 @@
   const buckets = $derived((table.rows || []).map((row) => row.bucket));
   const stacks = $derived(stackSegments({ series: visibleSeries, buckets }));
 
-  // Scaled from the stacked totals, not the individual maxima. Scaling from the
-  // largest single value puts a 50k stack on a 30k axis and clips it with no
-  // error at all. `floorAtZero` because a bar is read as a length from zero.
-  const scale = $derived(niceScale([maxStackTotal(stacks)], { floorAtZero: true }));
+  // Scaled from the stacked extents, not the individual maxima or the net total.
+  // Scaling from the largest single value puts a 50k stack on a 30k axis and
+  // clips it with no error at all; scaling from the net clips whichever side is
+  // larger, which is exactly what happens once liabilities exist.
+  // `floorAtZero` because a bar is read as a length from zero, and it is what
+  // lets one axis span both sides of it.
+  const scale = $derived.by(() => {
+    const { min, max } = stackExtent(stacks);
+    return niceScale([min, max], { floorAtZero: true });
+  });
   const yAt = (value) =>
     PLOT.top + plotHeight - ((Number(value) - scale.min) / (scale.max - scale.min || 1)) * plotHeight;
 
@@ -130,7 +143,18 @@
       <desc>
         Stacked bars of {title.toLowerCase()} at the end of each {granularity}, {buckets.length} bars.
         The vertical axis runs from {fmtShort(scale.min)} to {fmtShort(scale.max)}.
+        Assets stack above the zero line and liabilities below it.
       </desc>
+
+      <defs>
+        <!-- Texture only: the pattern is transparent apart from a dark diagonal,
+             so it is drawn OVER the solid series fill. Baking the colour into the
+             pattern instead would mean one pattern per series, since `currentColor`
+             resolves against the svg rather than the rect that references it. -->
+        <pattern id="liability-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="2.5" opacity="0.5" />
+        </pattern>
+      </defs>
 
       {#each scale.ticks as tick (tick.value)}
         <line class="trend-grid" x1={PLOT.left} x2={WIDTH - PLOT.right} y1={yAt(tick.value)} y2={yAt(tick.value)} />
@@ -139,12 +163,20 @@
         </text>
       {/each}
 
+      <!-- The zero baseline. Drawn stronger than the grid because assets stack up
+           from it and liabilities stack down from it: it is the line that makes
+           the two sides readable as one measure rather than two unrelated bars. -->
+      {#if scale.min < 0 && scale.max > 0}
+        <line class="trend-zero" x1={PLOT.left} x2={WIDTH - PLOT.right} y1={yAt(0)} y2={yAt(0)} />
+      {/if}
+
       {#each stacks as stack, index (stack.bucket)}
         {#each stack.segments as segment (segment.key)}
           {@const top = yAt(segment.to)}
           {@const bottom = yAt(segment.from)}
           <rect
             class="trend-bar"
+            class:liability={segment.side === 'liability'}
             x={centreAt(index) - barWidth / 2}
             y={top}
             width={barWidth}
@@ -155,10 +187,27 @@
               {segmentLabel(stack.bucket, segment, granularity, namesByKey)}: {fmt(segment.value)}
             </title>
           </rect>
+          {#if segment.side === 'liability'}
+            <!-- Texture over the solid fill, so the hue is still the series colour
+                 and the hatching reads as "this is a liability" on top of it. -->
+            <rect
+              class="trend-hatch"
+              x={centreAt(index) - barWidth / 2}
+              y={top}
+              width={barWidth}
+              height={Math.max(1, bottom - top)}
+              fill={LIABILITY_HATCH}
+              pointer-events="none"
+            />
+          {/if}
         {/each}
-        {#if stack.total}
-          <text class="trend-total" x={centreAt(index)} y={yAt(stack.total) - 5} text-anchor="middle">
-            {fmtShort(stack.total)}
+        {#if stack.net}
+          <!-- Anchored above the POSITIVE stack, not the net, so the label clears
+               the bar. A net below the top of the assets would otherwise be drawn
+               inside the bar it is labelling. -->
+          {@const labelY = Math.max(PLOT.top + 8, yAt(stack.top) - 5)}
+          <text class="trend-total" x={centreAt(index)} y={labelY} text-anchor="middle">
+            Net Value: {fmt(stack.net)}
           </text>
         {/if}
       {/each}
@@ -184,7 +233,14 @@
   .trend-chart { display: block; width: 100%; height: auto; }
   .trend-bar { shape-rendering: crispEdges; }
   .trend-bar:hover { opacity: 0.82; }
+  /* A liability is distinguishable by more than colour: it hangs below the zero
+     line, it is marked in the legend, and it carries a diagonal hatch. Colour
+     alone would fail in greyscale, in print, and for anyone who cannot separate
+     the hues - which is the one case where misreading a liability as an asset
+     actually matters. */
+  .trend-hatch { color: var(--text); pointer-events: none; }
   .trend-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; }
+  .trend-zero { stroke: var(--text); stroke-width: 1; opacity: 0.45; }
   .trend-axis-label { fill: var(--muted); font-size: 10px; }
   .trend-month-label { fill: var(--muted); font-size: 10px; }
   .trend-total { fill: var(--muted); font-size: 9px; }

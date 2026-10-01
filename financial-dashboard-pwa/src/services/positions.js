@@ -137,6 +137,17 @@ export async function addPosition(entityKey, values = {}) {
 
   const saved = await ENTITY_STORES[config.store].save(entry);
 
+  // Adding a position whose name already exists would otherwise open a second
+  // version chain: a new entity id means a new logical id, and nothing ever
+  // closes the first chain, so both rows claim to be current and the same holding
+  // is counted twice. Reuse the existing entry's id so the new snapshot extends
+  // the chain it belongs to. Currency is deliberately not part of the match: a
+  // holding re-keyed from one currency to another is the same position.
+  const existing = (await getAll(config.history)).find(
+    (row) => String(row?.series || row?.name || '').trim() === String(saved.name || '').trim()
+  );
+  const logicalId = existing?.logicalId || saved.id;
+
   const historyRows = await getAll(config.history);
   const plan = planValuation({
     rows: historyRows,
@@ -145,7 +156,10 @@ export async function addPosition(entityKey, values = {}) {
     date,
     value: snapshotValue(entityKey, { value: entry.value, price: entry.price, quantity: entry.quantity }),
     currency,
-    logicalId: saved.id
+    logicalId,
+    // Only netWorth entries carry a kind. Carried onto the history row so a
+    // liability reads negative in the chart and table.
+    kind: entry.kind || ''
   });
   const version = await applyPlan(config, plan);
 
@@ -212,7 +226,8 @@ export async function updateCurrentValue(entityKey, record, { date, value, price
       quantity: record.quantity
     }),
     currency: currencyCode,
-    logicalId: record.id
+    logicalId: record.id,
+    kind: record.kind || ''
   });
   const version = await applyPlan(config, plan);
 
@@ -224,7 +239,7 @@ export async function updateCurrentValue(entityKey, record, { date, value, price
  * (the historic "Save snapshot" forms on the Position, Investments and Pensions
  * screens). Choosing an existing name attaches to that series' version chain.
  */
-export async function recordSnapshot(entityKey, { series, date, value, currency = 'USD', logicalId = null } = {}) {
+export async function recordSnapshot(entityKey, { series, date, value, currency = 'USD', logicalId = null, kind = '' } = {}) {
   const config = entityConfig(entityKey);
   const name = String(series || '').trim();
   if (!name) throw new Error(`${config.seriesLabel} is required`);
@@ -238,7 +253,8 @@ export async function recordSnapshot(entityKey, { series, date, value, currency 
     date: effectiveDate,
     value: num(value),
     currency,
-    logicalId
+    logicalId,
+    kind
   });
   const version = await applyPlan(config, plan);
   return { version, plan };

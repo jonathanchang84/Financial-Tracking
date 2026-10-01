@@ -225,18 +225,18 @@ test('monthly history uses the last snapshot in each month and keeps missing mon
   assert.deepEqual(table.buckets, ['2026-01', '2026-02', '2026-03']);
   assert.equal(table.granularity, 'month');
   assert.equal(table.columns.length, 2);
-  assert.equal(table.rows[0].cells['Savings 1::USD'].value, 120);
-  assert.equal(table.rows[0].cells['Savings 1::USD'].change, null);
-  assert.equal(table.rows[1].cells['Savings 1::USD'].value, null);
-  assert.equal(table.rows[1].cells['Savings 1::USD'].change, null);
-  assert.equal(table.rows[2].cells['Savings 1::USD'].value, 144);
-  assert.equal(table.rows[2].cells['Savings 1::USD'].change, null);
+  assert.equal(table.rows[0].cells['Savings 1'].value, 120);
+  assert.equal(table.rows[0].cells['Savings 1'].change, null);
+  assert.equal(table.rows[1].cells['Savings 1'].value, null);
+  assert.equal(table.rows[1].cells['Savings 1'].change, null);
+  assert.equal(table.rows[2].cells['Savings 1'].value, 144);
+  assert.equal(table.rows[2].cells['Savings 1'].change, null);
   // A real zero is a figure, not a gap: null is reserved for "no record".
-  assert.equal(table.rows[2].cells['Savings 2::USD'].value, 0);
-  assert.equal(table.rows[2].cells['Savings 2::USD'].change, null);
+  assert.equal(table.rows[2].cells['Savings 2'].value, 0);
+  assert.equal(table.rows[2].cells['Savings 2'].change, null);
   // The closing snapshot's date travels with the cell so the chart can name it.
-  assert.equal(table.rows[0].cells['Savings 1::USD'].date, '2026-01-25');
-  assert.equal(table.rows[1].cells['Savings 1::USD'].date, null);
+  assert.equal(table.rows[0].cells['Savings 1'].date, '2026-01-25');
+  assert.equal(table.rows[1].cells['Savings 1'].date, null);
 });
 
 test('yearly history buckets by year and takes the last snapshot in the year', () => {
@@ -254,28 +254,38 @@ test('yearly history buckets by year and takes the last snapshot in the year', (
   assert.equal(table.granularity, 'year');
   assert.deepEqual(table.buckets, ['2024', '2025']);
   // December's 11,000, not the August peak of 12,000.
-  assert.equal(table.rows[0].cells['Pension::USD'].value, 11_000);
-  assert.equal(table.rows[0].cells['Pension::USD'].date, '2024-12-20');
-  assert.equal(table.rows[1].cells['Pension::USD'].value, 13_000);
+  assert.equal(table.rows[0].cells['Pension'].value, 11_000);
+  assert.equal(table.rows[0].cells['Pension'].date, '2024-12-20');
+  assert.equal(table.rows[1].cells['Pension'].value, 13_000);
   // Change is measured against the previous bucket, which is a year here.
-  assert.equal(table.rows[1].cells['Pension::USD'].change, (13000 - 11000) / 11000 * 100);
+  assert.equal(table.rows[1].cells['Pension'].change, (13000 - 11000) / 11000 * 100);
 });
 
-test('monthly history calculates adjacent month change and separates currencies', () => {
+test('monthly history calculates the adjacent month change', () => {
   const table = buildMonthlyHistoryTable({
     rows: [
       { series: 'Savings', date: '2026-01-15', value: 100, currencyCode: 'USD' },
-      { series: 'Savings', date: '2026-02-15', value: 110, currencyCode: 'USD' },
-      { series: 'Savings', date: '2026-01-15', value: 100, currencyCode: 'GBP' },
-      { series: 'Savings', date: '2026-02-15', value: 121, currencyCode: 'GBP' }
-    ],
-    convert: (value, currency) => currency === 'GBP' ? value * 2 : value
+      { series: 'Savings', date: '2026-02-15', value: 110, currencyCode: 'USD' }
+    ]
   });
-  assert.deepEqual(table.columns.map((column) => column.key), ['Savings::GBP', 'Savings::USD']);
-  assert.equal(table.rows[1].cells['Savings::USD'].change, 10);
-  assert.equal(table.rows[1].cells['Savings::USD'].value, 110);
-  assert.equal(table.rows[1].cells['Savings::GBP'].value, 242);
-  assert.equal(table.rows[1].cells['Savings::GBP'].change, 21);
+  assert.deepEqual(table.columns.map((column) => column.key), ['Savings']);
+  assert.equal(table.rows[1].cells['Savings'].change, 10);
+  assert.equal(table.rows[1].cells['Savings'].value, 110);
+});
+
+test('one series recorded in two currencies is one column, in its latest currency', () => {
+  // This used to be asserted the other way round, and that assertion is what let
+  // a duplicated position inflate the total. One name is one position, so the
+  // later snapshot wins rather than producing a column per currency.
+  const table = buildMonthlyHistoryTable({
+    rows: [
+      { id: 'v1', logicalId: 'a', series: 'Savings', date: '2026-01-15', value: 100, currencyCode: 'USD' },
+      { id: 'v2', logicalId: 'b', series: 'Savings', date: '2026-02-15', value: 121, currencyCode: 'GBP' }
+    ]
+  });
+  assert.equal(table.columns.length, 1, 'one position, one column');
+  assert.equal(table.columns[0].currency, 'GBP', 'the currency now in force');
+  assert.equal(table.rows[1].cells['Savings'].value, 121, 'the later snapshot, not both');
 });
 
 test('monthly history returns an empty shape without valid dated snapshots', () => {
@@ -297,6 +307,6 @@ test('monthly history does not invoke the value reader for missing cells', () =>
     }
   });
   assert.equal(calls, 3);
-  assert.equal(table.rows[1].cells['Savings::USD'].value, null);
-  assert.equal(table.rows[1].cells['Savings::USD'].change, null);
+  assert.equal(table.rows[1].cells['Savings'].value, null);
+  assert.equal(table.rows[1].cells['Savings'].change, null);
 });

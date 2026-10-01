@@ -2,11 +2,13 @@
   /** Overview: headline metrics, daily runway preview, position and budget health. */
   import {
     settings,
-    positionTotals,
     netWorthHistory,
-    netWorthTotal,
+    portfolioHistory,
+    pensionHistory,
     investmentsTotal,
     pensionsTotal,
+    totalNetWealth,
+    wealthTotals,
     expensesLogged,
     budgets,
     bills,
@@ -17,6 +19,7 @@
   } from '../stores/finance.js';
   import { runwayPlanner, growthPercent, num } from '../services/runway.js';
   import { normaliseIncomeStreams, resolveMainPayday } from '../services/income.js';
+  import { wealthPointsByDate } from '../services/wealth.js';
   import CurrencySelect from './CurrencySelect.svelte';
   import DailyRunwayTable from './DailyRunwayTable.svelte';
 
@@ -41,14 +44,18 @@
   const inDisplay = (value, from = balanceCurrency) =>
     money(convertCurrency(value, from, $displayCurrency), $displayCurrency);
 
-  /** Month-on-month change of the latest recorded snapshots (historic wording). */
+  /**
+   * Month-on-month change of the combined wealth total.
+   *
+   * All three histories are summed per date rather than concatenated, so each
+   * point is a genuine total and the comparison is like-for-like. See
+   * `wealthPointsByDate` for why concatenating would be wrong.
+   */
   const growth = $derived.by(() => {
-    const points = [...$netWorthHistory]
-      .map((row) => ({
-        date: String(row.date || ''),
-        value: convertCurrency(num(row.value), row.currencyCode || row.currency || 'USD', $displayCurrency)
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    const points = wealthPointsByDate([$netWorthHistory, $portfolioHistory, $pensionHistory], {
+      convert: (value, row) =>
+        convertCurrency(value, row.currencyCode || row.currency || 'USD', $displayCurrency)
+    });
     const percent = growthPercent(points);
     if (percent === null) return 'Not enough snapshot data yet';
     return `${percent >= 0 ? '+' : ''}${percent.toFixed(2)}% vs the previous snapshot`;
@@ -56,7 +63,7 @@
 
   const budgetRows = $derived($budgets.slice(0, 3));
   const breakdown = $derived(
-    Object.entries($positionTotals)
+    Object.entries($wealthTotals)
       .map(([code, value]) => ({ code, value: convertCurrency(value, code, $displayCurrency) }))
   );
   const sortedBreakdown = $derived([...breakdown].sort((a, b) => b.value - a.value));
@@ -82,7 +89,7 @@
   <div class="fh-metrics">
     <article class="fh-metric">
       <p class="eyebrow">NET WORTH</p>
-      <strong>{money($netWorthTotal, $displayCurrency)}</strong>
+      <strong>{money($totalNetWealth, $displayCurrency)}</strong>
       <p class="hint">{growth}</p>
     </article>
     <article class="fh-metric">
@@ -142,7 +149,7 @@
   <div class="fh-grid dashboard-summary-grid">
     <section class="panel">
       <div class="section-heading">
-        <div><p class="eyebrow">POSITION</p><h3>Net worth by currency</h3></div>
+        <div><p class="eyebrow">POSITION</p><h3>Total wealth by currency</h3></div>
         <button class="text-button" type="button" onclick={onOpenPosition}>View</button>
       </div>
       {#if sortedBreakdown.length}

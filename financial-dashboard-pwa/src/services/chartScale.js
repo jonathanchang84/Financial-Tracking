@@ -55,12 +55,20 @@ export function niceScale(values, { tickCount = 5, floorAtZero = false } = {}) {
     // Flat series. Widen by half the value (or 1 when the value is 0) so the
     // line sits in the middle of the plot instead of on an edge.
     const padding = low === 0 ? 1 : Math.abs(low) / 2;
-    low -= padding;
+    // Symmetric only when a zero floor is not wanted. With one, an all-positive
+    // chart still has to start at zero, so the floor is held and only the head
+    // is given room.
+    if (!floorAtZero) low -= padding;
     high += padding;
   } else {
     // A little breathing room so the extremes are not clipped by the padding.
     const spread = (high - low) * 0.05;
-    low -= spread;
+    // ...but never below zero when a zero floor is wanted. The floor is about to
+    // be rounded down to a whole tick step anyway, so padding the bottom only
+    // buys room that rounds away: pad -11,400 to a 100k step and the axis starts
+    // at -100k for a chart whose lowest value is 0. A chart with no liabilities
+    // must still read as starting at zero.
+    if (!floorAtZero) low -= spread;
     high += spread;
   }
 
@@ -173,21 +181,35 @@ export function bucketRange(keys, granularity = 'year') {
 }
 
 /**
- * Cumulative `y0`/`y1` for each visible series within every bucket.
+ * Cumulative `y0`/`y1` for each visible series within every bucket, stacked
+ * around zero: assets climb from zero, liabilities descend from zero.
  *
- * A null is skipped rather than counted as zero. Treating "we have no figure"
- * as "it was worth nothing" would put a zero-height segment in the stack, which
+ * Two independent accumulators, not one. A single running `base` would make a
+ * negative value drag the running baseline down, so every segment after a
+ * liability would be drawn at the wrong height and the total would land in the
+ * wrong place. Net worth has both kinds of value, so the two sides are stacked
+ * independently and the bar reads as assets above the line, liabilities below.
+ *
+ * A null is skipped rather than counted as zero. Treating "we have no figure" as
+ * "it was worth nothing" would put a zero-height segment in the stack, which
  * reads as a real value.
  *
- * Totals are the sum of the stacked segments, so the axis can be scaled from
- * them. That is the whole reason this is separate: a scale built from the largest
- * individual value would put a 50k stack on a 30k axis and clip it with no error.
+ * `from`/`to` stay ascending (from < to) for every segment, including the
+ * downward ones, so the renderer can compute `y` and `height` without knowing
+ * which side a segment is on.
+ *
+ * `top`, `bottom` and `net` are what the axis and the label read: `top` is the
+ * positive ceiling, `bottom` the negative floor, and `net` is assets minus
+ * liabilities. Scaling from `top`/`bottom` rather than `net` is the whole reason
+ * this is separate - an axis built from the net alone would clip whichever side
+ * is larger, with no error at all.
  */
 export function stackSegments({ series = [], buckets = [] } = {}) {
   return buckets.map((bucket) => {
     const segments = [];
-    let base = 0;
-    let total = 0;
+    let up = 0;
+    let down = 0;
+    let net = 0;
     for (const line of series) {
       const cell = line?.values?.get?.(bucket);
       const value = cell?.value;
@@ -198,17 +220,41 @@ export function stackSegments({ series = [], buckets = [] } = {}) {
       if (value === null || value === undefined) continue;
       const amount = Number(value);
       if (!Number.isFinite(amount)) continue;
-      segments.push({ key: line.key, color: line.color, value: amount, from: base, to: base + amount });
-      base += amount;
-      total += amount;
+      net += amount;
+      if (amount >= 0) {
+        segments.push({ key: line.key, color: line.color, value: amount, from: up, to: up + amount, side: 'asset' });
+        up += amount;
+      } else {
+        // Descending. `down` stays a NEGATIVE running baseline, so the next
+        // liability simply starts where the last one ended and `bottom` is
+        // already the true negative floor. Tracking it as a positive depth
+        // instead leaves `bottom` positive, which puts the axis floor on the
+        // wrong side and draws liabilities above the assets.
+        const next = down + amount;
+        segments.push({ key: line.key, color: line.color, value: amount, from: next, to: down, side: 'liability' });
+        down = next;
+      }
     }
-    return { bucket, segments, total };
+    return { bucket, segments, total: net, net, top: up, bottom: down };
   });
+}
+
+/**
+ * The range the y axis has to cover: the highest positive stack and the lowest
+ * negative one. Zero is always included by the caller via `floorAtZero`, so the
+ * two sides are comparable against a single baseline.
+ */
+export function stackExtent(stacks) {
+  const list = stacks || [];
+  return {
+    min: list.reduce((lowest, entry) => (Number(entry?.bottom) < lowest ? Number(entry?.bottom) : lowest), 0),
+    max: list.reduce((highest, entry) => (Number(entry?.top) > highest ? Number(entry?.top) : highest), 0)
+  };
 }
 
 /** Largest stacked total, which is what the y axis has to accommodate. */
 export function maxStackTotal(stacks) {
-  return (stacks || []).reduce((highest, entry) => (entry.total > highest ? entry.total : highest), 0);
+  return (stacks || []).reduce((highest, entry) => (Number(entry?.net ?? entry?.total) > highest ? Number(entry?.net ?? entry?.total) : highest), 0);
 }
 
 /**
