@@ -726,3 +726,213 @@ test('signing up establishes a session and signing out revokes it', async () => 
   }
 });
 
+test('the pay cycle grid does not render a marker on top of a figure', async () => {
+  // A fixed-width date column was narrower than the "Balance recorded" badge, so the
+  // badge overflowed into the Starting column and painted over the balance, leaving
+  // the number unreadable. This is a geometry failure, so only measuring real boxes
+  // in a real browser can catch it.
+  const { context, page, errors } = await openPage();
+  try {
+    await gotoApp(page, '#cashflow');
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    await page.evaluate(async () => {
+      const open = () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 3);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const key = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const db = await open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['settings', 'balanceHistory'], 'readwrite');
+        const settings = tx.objectStore('settings');
+        settings.put({ id: 'balance', key: 'balance', value: 900 });
+        settings.put({ id: 'balanceCurrency', key: 'balanceCurrency', value: 'USD' });
+        settings.put({
+          id: 'incomeStreams',
+          key: 'incomeStreams',
+          value: [{ id: 's1', name: 'Salary', dayOfMonth: 15, isMain: true }]
+        });
+        // A record today, so the row carries a "Recorded" badge to measure against.
+        tx.objectStore('balanceHistory').put({
+          id: `balance-${key(new Date())}`,
+          date: key(new Date()),
+          amount: 900,
+          currencyCode: 'USD'
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    });
+
+    await page.reload();
+    await page.waitForSelector('.runway-flag.recorded', { timeout: 20_000 });
+
+    // A badge must not share screen space with the figure in the next column, and
+    // the long header labels must not collide with each other.
+    const clashes = await page.evaluate(() => {
+      const bad = [];
+      for (const row of document.querySelectorAll('.runway-table tbody tr')) {
+        const flag = row.querySelector('.runway-flag');
+        const starting = row.querySelector('td');
+        if (!flag || !starting) continue;
+        const a = flag.getBoundingClientRect();
+        const b = starting.getBoundingClientRect();
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
+          bad.push({ flag: flag.textContent.trim(), starting: starting.textContent.trim() });
+        }
+      }
+      const heads = Array.from(document.querySelectorAll('.runway-table thead th')).map((cell) => ({
+        text: cell.textContent.trim(),
+        box: cell.getBoundingClientRect()
+      }));
+      for (let i = 0; i < heads.length; i += 1) {
+        for (let j = i + 1; j < heads.length; j += 1) {
+          const a = heads[i].box;
+          const b = heads[j].box;
+          if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom && b.top < a.bottom) {
+            bad.push({ headerOverlap: [heads[i].text, heads[j].text] });
+          }
+        }
+      }
+      return bad;
+    });
+    assert.deepEqual(clashes, [], `markers or headers overlap: ${JSON.stringify(clashes)}`);
+    assert.deepEqual(errors, [], `console errors: ${JSON.stringify(errors)}`);
+  } catch (error) {
+    annotateFailure('Browser smoke: a runway marker covers the balance beside it', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
+
+test('a backdated balance records history without moving the current balance', async () => {
+  // The reported failure: entering a past balance and then changing the date field
+  // wrote the past figure over today's balance, so the grid's first row read the
+  // wrong number. The date field must never save on its own, and a past save must
+  // leave the current balance alone.
+  const { context, page, errors } = await openPage();
+  try {
+    await gotoApp(page, '#cashflow');
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    // A payday rule is what gives the grid a window at all; without one there is
+    // nothing to render and the assertions below would pass for the wrong reason.
+    await page.evaluate(async () => {
+      const open = () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 3);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const db = await open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['settings'], 'readwrite');
+        const settings = tx.objectStore('settings');
+        settings.put({ id: 'balanceCurrency', key: 'balanceCurrency', value: 'GBP' });
+        settings.put({
+          id: 'incomeStreams',
+          key: 'incomeStreams',
+          value: [{ id: 's1', name: 'Salary', dayOfMonth: 15, isMain: true }]
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    });
+    await page.reload();
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    const days = await page.evaluate(() => {
+      const now = new Date();
+      const back = new Date(now.getTime() - 6 * 86400000);
+      const key = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      return { past: key(back), today: key(now) };
+    });
+
+    const balanceInput = page.locator('.fh-form input[type="number"]');
+    const dateInput = page.locator('.fh-form input[type="date"]');
+
+    // Record today's balance first, so there is a current figure to protect.
+    await dateInput.fill(days.today);
+    await balanceInput.fill('1758.04');
+    await balanceInput.blur();
+    await page.waitForTimeout(500);
+
+    // Now backfill a past date. Only the amount edit may write anything.
+    await dateInput.fill(days.past);
+    await balanceInput.fill('4020');
+    await balanceInput.blur();
+    await page.waitForTimeout(700);
+
+    // A future day is not selectable in the first place.
+    assert.equal(await dateInput.getAttribute('max'), days.today, 'the date field must not offer a future day');
+
+    const stored = await page.evaluate(async () => {
+      const read = (store) =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 3);
+          request.onsuccess = () => {
+            const db = request.result;
+            const all = db.transaction(store, 'readonly').objectStore(store).getAll();
+            all.onsuccess = () => {
+              db.close();
+              resolve(all.result);
+            };
+            all.onerror = () => reject(all.error);
+          };
+          request.onerror = () => reject(request.error);
+        });
+      return { settings: await read('settings'), history: await read('balanceHistory') };
+    });
+
+    const balance = stored.settings.find((row) => row.key === 'balance');
+    assert.equal(Number(balance?.value), 1758.04, 'a backfill must not change the current balance');
+
+    const byDate = new Map(stored.history.map((row) => [row.date, Number(row.amount)]));
+    assert.equal(byDate.get(days.past), 4020, 'the backfilled day keeps its own figure');
+    assert.equal(byDate.get(days.today), 1758.04, "today's recorded figure is untouched");
+    assert.equal(stored.history.length, 2, `only the two entered days exist: ${JSON.stringify(stored.history)}`);
+
+    // The grid then shows each dated record on its own row, so the backfill is
+    // visible rather than masked by today's balance.
+    await page.reload();
+    await page.waitForSelector('.runway-table tbody tr', { timeout: 20_000 });
+    const rows = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.runway-table tbody tr')).map((row) => ({
+        date: row.querySelector('th strong')?.textContent?.trim(),
+        starting: row.querySelector('td')?.textContent?.trim()
+      }))
+    );
+    assert.ok(rows.length > 0, 'the grid rendered no rows');
+    // The backfilled 4020 and today's 1758.04 each appear on their own row, so the
+    // past figure is visible rather than masked by today's balance. Compared with a
+    // tolerance because the cell holds a formatted string.
+    const amounts = rows.map((row) => Number(String(row.starting).replace(/[^0-9.]/g, ''))).filter((n) => n > 0);
+    const near = (expected) => amounts.some((value) => Math.abs(value - expected) < 0.02);
+    assert.ok(near(4020), `the backfilled 4020 should appear on its own row: ${JSON.stringify(rows)}`);
+    assert.ok(near(1758.04), `today's figure should still appear: ${JSON.stringify(rows)}`);
+    // Days before the earliest record stay blank rather than being filled with a
+    // guess, which is what keeps an em-dash meaning "unknown" and not "nothing".
+    assert.ok(
+      rows.some((row) => row.starting === '—'),
+      'days with no record behind them should stay blank'
+    );
+
+    assert.deepEqual(errors, [], `console errors: ${JSON.stringify(errors)}`);
+  } catch (error) {
+    annotateFailure('Browser smoke: a backdated balance moved the current balance', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
+

@@ -231,10 +231,24 @@ table.fh-table th, table.grid th { color: var(--muted); font-weight: 600; }
 table.fh-table tbody tr:hover, table.grid tbody tr:hover { background: var(--panel-alt); }
 table.fh-table td.strong { font-weight: 600; }
 table.fh-table caption { text-align: left; }
-.fh-table.runway-table { table-layout: fixed; min-width: 1050px; }
-.runway-table col.runway-date { width: 120px; }
+/* The runway grid sizes its columns to their content rather than pinning them.
+   A fixed date column was narrower than the "Balance recorded" badge, which is
+   what let the badge spill over the Starting figure and render on top of it, and
+   which forced the long header labels to collide with the next column. Sizing to
+   content means the grid can never overlap a number it does not own. */
+.fh-table.runway-table { min-width: 1050px; }
 .runway-table col.runway-number { width: 135px; }
 .runway-table col.runway-cumulative { width: 175px; }
+/* Headers may wrap onto a second line. They are labels, not figures, so losing
+   the single line costs nothing and stops a long label overlapping its
+   neighbour. */
+.runway-table thead th { white-space: normal; line-height: 1.25; }
+/* The date cell is a stacked block: the day, then the markers on their own line.
+   Inline markers were laid out after the day number and ran past the column,
+   so the badge landed on top of the next cell's number. */
+.runway-table tbody th.text-cell { white-space: normal; }
+.runway-table tbody th.text-cell strong { display: block; }
+.runway-table tbody th.text-cell small { display: block; margin-top: 2px; }
 /* The cycle view spans days already gone, so a past row is shaded to read as
    history, today is tinted to stand out, and an unanchored day is dimmed again
    because its cells are em-dashes rather than figures. Today wins over past so a
@@ -246,9 +260,10 @@ table.fh-table caption { text-align: left; }
 .runway-table tbody tr.is-unanchored td,
 .runway-table tbody tr.is-unanchored th { opacity: 0.65; }
 .runway-table .runway-flag {
-  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px;
-  font-size: 0.65rem; letter-spacing: 0.03em; text-transform: uppercase;
+  display: inline-block; margin: 0 3px 0 0; padding: 0 5px; border-radius: 999px;
+  font-size: 0.62rem; letter-spacing: 0.02em; text-transform: uppercase;
   border: 1px solid currentColor; color: var(--accent);
+  vertical-align: 1px;
 }
 .runway-table .runway-flag.recorded { color: var(--muted); }
 .fh-table.current-month-table { table-layout: fixed; min-width: 780px; }

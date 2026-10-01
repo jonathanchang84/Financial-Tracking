@@ -13,9 +13,9 @@
     <strong>{inDisplay(plan.safeToday)}</strong>
     <p class="hint">
       {plan.isCycle
-        ? 'Spread across the whole pay cycle; after reserving'
-        : 'After reserving'}
-      {inDisplay(plan.obligationTotal)}; hypothetical
+        ? `Across the ${plan.budgetDays || 0} days left in this cycle`
+        : 'Across the days left before payday'}
+      after reserving {inDisplay(plan.remainingObligations ?? plan.obligationTotal)}; hypothetical
     </p>
   </article>
   <article class="fh-metric">
@@ -36,7 +36,7 @@
     <p class="eyebrow">CASH AFTER BILLS & SPEND ITEMS</p>
     <strong class:negative={plan.cashAfterPlannedSpend < 0}>{inDisplay(plan.cashAfterPlannedSpend)}</strong>
     <p class="hint">
-      {plan.shortfall > 0 ? `${inDisplay(plan.shortfall)} short of obligations` : 'Available for the cycle after obligations'}
+      {plan.shortfall > 0 ? `${inDisplay(plan.shortfall)} short of obligations` : 'Available to spend before payday, after the bills still to come'}
     </p>
   </article>
   <article class="fh-metric">

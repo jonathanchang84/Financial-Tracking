@@ -32,7 +32,11 @@ export function normaliseBalanceRecord(row) {
     id: String(row?.id || '').trim() || balanceRecordId(date),
     date,
     amount: raw,
-    currencyCode: String(row?.currencyCode || row?.currency || '').trim()
+    currencyCode: String(row?.currencyCode || row?.currency || '').trim(),
+    // The runway adopts an undated balance as a stand-in record for today. The flag
+    // has to survive normalisation, or the row gets badged "Balance recorded" for a
+    // figure the user never entered against a date.
+    implicit: row?.implicit === true
   };
 }
 

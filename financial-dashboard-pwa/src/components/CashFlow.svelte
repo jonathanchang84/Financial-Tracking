@@ -88,11 +88,11 @@
     })
   );
 
-  // The grid is anchored on recorded balances, so with no history it has nothing
-  // to show. Say so and point at the fix rather than rendering an empty panel.
+  // A balance with no date is still enough to draw the grid from today onward, so
+  // the empty state is only ever about a missing balance or a missing payday now.
   const runwayEmptyMessage = $derived(
     plan.awaitingHistory
-      ? 'Record a dated balance to see the runway. Enter the balance with the date it was true, and the cycle will fill in from there.'
+      ? 'Enter your available balance above to see the runway. Add a dated balance for a past day to fill in the days already gone in this cycle.'
       : 'Set your balance and payday to see the daily runway.'
   );
 
@@ -143,17 +143,44 @@
       })
   );
 
-  // Persist the balance. Invalid drafts are rejected by CashSettingsPanel before
-  // this is reached, and the last valid stored balance is left untouched.
+  // Persist the balance, with the date deciding what the save means.
   //
-  // A dated record is written alongside the scalar, because the cycle view anchors
-  // its past days on recorded balances rather than inventing them. `balanceDate`
-  // is stripped before saving so it never lands in the settings store as a
-  // stray key; the history record is where a date belongs.
+  // The three cases are genuinely different operations, and treating them as one
+  // was corrupting the runway:
+  //   - past:    history only. Writing the scalar as well would replace *today's*
+  //              balance with a figure from last Tuesday, and since the grid
+  //              anchors today on that scalar, every forward projection moved with
+  //              it. A backfill must never move today's balance.
+  //   - today:   both, because this is the common case and the scalar is what the
+  //              rest of the app reads.
+  //   - future:  rejected. A balance that has not happened yet is not a fact, and
+  //              it would anchor the grid on a day the user cannot spend on.
   async function saveCashSettings(next) {
     const { balanceDate, ...settings } = next;
-    await saveSettings(settings);
     const date = dayKey(balanceDate);
+    const todayKey = dayKey(new Date());
+    if (date && date > todayKey) {
+      errorToast('Balance dates cannot be in the future');
+      // Thrown so the form reports the rejection rather than claiming a save.
+      throw new Error('future balance date');
+    }
+    if (date && date < todayKey) {
+      // History only: `balance` is deliberately left out of the settings write, so
+      // the stored current balance is untouched by a past backfill. The currency is
+      // still saved — it describes the account, not the day.
+      const { balance, ...withoutBalance } = settings;
+      await saveSettings(withoutBalance);
+      await saveRecord(
+        'balanceHistory',
+        { id: balanceRecordId(date), date, amount: num(balance), currencyCode: next.balanceCurrency },
+        { silent: true }
+      );
+      // A distinct confirmation, because a backfill otherwise reads on screen
+      // exactly like changing what you have available today.
+      showToast(`Recorded ${money(num(balance), next.balanceCurrency)} for ${longLabel(date)}`);
+      return;
+    }
+    await saveSettings(settings);
     if (date) {
       await saveRecord(
         'balanceHistory',
@@ -287,7 +314,7 @@
       <div>
         <p class="eyebrow">DAILY VIEW</p>
         <h3>Daily runway table</h3>
-        <p class="hint">One row per day across the whole pay cycle: starting balance, hypothetical Safe to Spend, Spend Items, projected cumulative safe spend (that amount times the day number), bills and the actual ending balance. Days already gone are shaded, and a day marked "Balance recorded" is one you entered a balance for.</p>
+        <p class="hint">One row per day across the whole pay cycle: starting balance, hypothetical Safe to Spend, Spend Items, projected cumulative safe spend (that amount times the number of days from today), bills and the actual ending balance. Days already gone are shaded and show an em-dash for the cumulative column, and a day marked "Recorded" is one you entered a balance for. Entering a balance for a past date records history only; it does not change what you have available today.</p>
       </div>
     </div>
     <DailyRunwayTable

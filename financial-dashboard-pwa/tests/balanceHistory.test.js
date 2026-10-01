@@ -23,10 +23,16 @@ test('a record is coerced into the canonical shape', () => {
     id: 'balance-2026-10-01',
     date: '2026-10-01',
     amount: 1234.5,
-    currencyCode: 'GBP'
+    currencyCode: 'GBP',
+    // Absent rather than `undefined`, because a deepEqual against the stored shape
+    // is the cheapest guard against silently changing a record's canonical form.
+    implicit: false
   });
   // The legacy `currency` key is still read, matching the other record types.
   assert.equal(normaliseBalanceRecord({ date: '2026-10-01', amount: 5, currency: 'USD' }).currencyCode, 'USD');
+  // The runway's stand-in record for an undated balance keeps its flag through
+  // normalisation, so the day is not badged as one the user recorded.
+  assert.equal(normaliseBalanceRecord({ date: '2026-10-01', amount: 5, implicit: true }).implicit, true);
 });
 
 test('unusable records are dropped rather than stored as a blank or a zero', () => {

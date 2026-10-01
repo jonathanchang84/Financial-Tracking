@@ -2,12 +2,15 @@
  * Daily runway math — the single source of truth for cash-flow projections.
  *
  * Runway rules:
- *   - one row per day from today through payday, inclusive
- *   - safe to spend reserves all unpaid bills and Spend Items remaining in the cycle
- *   - that reserve is divided once by the inclusive day count, so the daily
- *     figure is a flat cycle budget and the cumulative column is exactly
- *     `safeDaily × dayNumber`, finishing on that reserve — it can never exceed
- *     the cash available
+ *   - one row per day across the pay cycle that contains today, inclusive
+ *   - safe to spend reserves every bill and Spend Item still ahead of today
+ *   - that reserve is divided once by the *remaining* day count — today through
+ *     payday — so the daily figure is a budget for the days still spendable, and
+ *     the cumulative column is exactly `safeDaily × daysFromToday`, finishing on
+ *     that reserve, so it can never exceed the cash available
+ *   - a day already gone is history: its charges always apply, so the shaded rows
+ *     show the bills that really left the account and the balances above them step
+ *     down. Only today and future occurrences are suppressed by a paid marker
  *   - safe to spend is hypothetical and never reduces Starting or Ending
  *   - Ending changes only for actual Spend Items and bills on that day
  *   - Saturday / Sunday bill due dates shift forward to Monday
@@ -110,18 +113,33 @@ function billOccurrenceMonth(bill, date) {
   return dayKey(previousMonth).slice(0, 7);
 }
 
-function scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses }) {
+/**
+ * What is charged on one day of the window.
+ *
+ * `todayKey` splits the two cases that were previously collapsed into one. A day
+ * already gone is *history*: the money left the account whether or not the bill was
+ * ever ticked off, so the charge always applies and the shaded rows keep the bills
+ * that really went out. Today and future occurrences are the ones being reserved,
+ * so a paid marker drops them there and only there.
+ *
+ * Applying `isExpensePaid` to past days was what emptied the shaded rows: a bill
+ * marked paid vanished from history, and because `ending` is built from the
+ * charges on the day, the balances above it never stepped down either. The
+ * grid then contradicted the same bill still being listed in the month view.
+ */
+function scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses, todayKey = '' }) {
   const key = dayKey(date);
+  const isHistory = Boolean(todayKey) && key < todayKey;
   const commitments = relevantCommitments.reduce(
     (sum, item) =>
-      dayKey(item.date) === key && !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7))
+      dayKey(item.date) === key && (isHistory || !isExpensePaid(item, item.date, paidExpenses, dayKey(item.date).slice(0, 7)))
         ? sum + num(item.amount)
         : sum,
     0
   );
   const bills = relevantBills.reduce(
     (sum, bill) =>
-      billIsDueOn(bill, date) && !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date))
+      billIsDueOn(bill, date) && (isHistory || !isExpensePaid(bill, date, paidExpenses, billOccurrenceMonth(bill, date)))
         ? sum + num(bill.amount)
         : sum,
     0
@@ -129,12 +147,12 @@ function scheduledForDate({ date, relevantBills, relevantCommitments, paidExpens
   return { commitments, bills, total: commitments + bills };
 }
 
-function runwayObligations({ bills, commitments, currency, start, end, dayCount, paidExpenses = {} }) {
+function runwayObligations({ bills, commitments, currency, start, end, dayCount, paidExpenses = {}, todayKey = '' }) {
   const relevantBills = bills.filter((bill) => inCurrency(bill, currency) && bill.active !== false);
   const relevantCommitments = commitments.filter((item) => inCurrency(item, currency));
   const schedule = datesThrough(start, end, dayCount).map((date) => ({
     date: dayKey(date),
-    ...scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses })
+    ...scheduledForDate({ date, relevantBills, relevantCommitments, paidExpenses, todayKey })
   }));
   const totals = schedule.reduce(
     (result, row) => ({
@@ -149,23 +167,63 @@ function runwayObligations({ bills, commitments, currency, start, end, dayCount,
     remainingTotal += schedule[index].total;
     remainingTotals[index] = remainingTotal;
   }
+  // The reserve that is still ahead of today. The cycle-wide `total` stays
+  // untouched because the "where the runway goes" panel is about the whole cycle,
+  // but the Safe to Spend copy must quote the money that is actually still owed —
+  // quoting a figure that includes charges already paid reads as if they were
+  // still ahead, and made the two panels contradict each other.
+  const remainingFromToday = todayKey
+    ? schedule.reduce((sum, row) => (row.date >= todayKey ? sum + row.total : sum), 0)
+    : remainingTotals[remainingTotals.length - 1] || 0;
   return {
     ...totals,
     total: totals.scheduledBills + totals.scheduledCommitments,
+    remainingTotal: remainingFromToday,
     schedule: schedule.map((row, index) => ({ ...row, remainingTotal: remainingTotals[index] }))
   };
 }
 
 /**
- * Safe to Spend is a *budget* for the whole cycle, not a per-day recomputation.
+ * The history the grid runs on, with an implicit record for today when needed.
  *
- * The pot is `cash after every unpaid bill and Spend Item still in the cycle`
- * (the "CASH AFTER BILLS & SPEND ITEMS" figure). It is divided once by the
- * inclusive `dayCount` — today through payday — giving one flat `safeDaily` that
- * every row shows. The cumulative column is then exactly `safeDaily × dayNumber`
- * (tomorrow ×2, the day after ×3), so the final row is
- * `safeDaily × dayCount` = the pot itself, by construction rather than by
- * accumulation. The column therefore can never exceed the cash available.
+ * `settings.balance` is a real, current figure that carries no date, and a user who
+ * has never opened the backfill form has no dated record at all. Without an anchor
+ * on today the entire grid returned no rows and the screen reported
+ * `awaitingHistory` — for a user who plainly had a balance. So when nothing is
+ * recorded for today, the scalar balance is adopted as today's record.
+ *
+ * The record is flagged `implicit` so the table can anchor the row and step the
+ * running balance from it without badging it "Balance recorded": the user never
+ * entered a dated figure, and claiming they did would be a small lie in the one
+ * column whose whole job is telling a measured figure from a carried one. Days
+ * *before* today are deliberately left alone — an undated balance says nothing
+ * about last Tuesday, so those rows stay blank.
+ */
+function anchoredHistory(balanceHistory, { todayIso, balance, currency, endKey }) {
+  const records = normaliseBalanceHistory(balanceHistory).filter((record) => !endKey || record.date <= endKey);
+  if (records.some((record) => record.date === todayIso)) return records;
+  const amount = num(balance);
+  if (!(amount > 0)) return records;
+  return [...records, { id: `balance-${todayIso}`, date: todayIso, amount, currencyCode: currency, implicit: true }];
+}
+
+/**
+ * Safe to Spend is a *budget for the days still ahead*, not a whole-cycle average.
+ *
+ * The pot is `cash after every bill and Spend Item still to come` (the "CASH AFTER
+ * BILLS & SPEND ITEMS" figure). It is divided once by `days` — today through payday
+ * inclusive — giving one flat `safeDaily` that every row shows. The cumulative
+ * column is then exactly `safeDaily × daysFromToday` (tomorrow ×2, the day after
+ * ×3), so the final row is `safeDaily × days` = the pot itself, by construction
+ * rather than by accumulation, and the column can never exceed the cash available.
+ *
+ * The divisor is the *remaining* days, not the cycle length. The grid spans the
+ * whole pay cycle, so dividing by the full cycle spread the budget across days
+ * that had already gone: the daily figure silently shrank the longer the cycle ran
+ * on, and the days a user could actually still spend on got a fraction of the money
+ * available. Because the pot is measured from today's anchor and the divisor counts
+ * the same span, `projectedAtPayday` and the table's closing `ending` are the same
+ * figure by construction and cannot drift apart.
  *
  * The two defects this replaces, which were the same bug seen from two sides:
  *   - dividing the pot by `daysUntilPayday - 1` inflated the daily figure, and
@@ -179,13 +237,16 @@ function runwayObligations({ bills, commitments, currency, start, end, dayCount,
  *     money once per day and the cumulative ran several times over the real
  *     figure
  *
- * `dayCount` is 1 when payday is today, so the division is safe without a
+ * `days` is 1 when payday is today, so the division is safe without a
  * special case: a single row reading ×1.
  */
-export function safeSpendPlan({ obligationsOnlyCash, dayCount }) {
+export function safeSpendPlan({ obligationsOnlyCash, days = 0, dayCount = null }) {
   const safeTotal = Math.max(0, num(obligationsOnlyCash));
-  const days = Math.max(1, Math.trunc(num(dayCount)));
-  return { safeTotal, safeDaily: safeTotal / days, dayCount: days };
+  // `dayCount` is the old positional name for the same argument and is still
+  // accepted so existing callers and tests describe the divisor honestly.
+  const divisor = dayCount === null ? days : dayCount;
+  const divisorDays = Math.max(1, Math.trunc(num(divisor)));
+  return { safeTotal, safeDaily: safeTotal / divisorDays, days: divisorDays, dayCount: divisorDays };
 }
 
 /**
@@ -219,6 +280,7 @@ function buildRunwayRows({
   maxDays,
   safeDaily = 0,
   safeTotal = 0,
+  safeDays = null,
   history = [],
   today = new Date()
 }) {
@@ -251,7 +313,9 @@ function buildRunwayRows({
       running: running === null ? null : Math.round(running * 1e6) / 1e6,
       isPast: key < todayIso,
       isToday: key === todayIso,
-      isRecorded: recordByDate.has(key)
+      // An implicit record adopts the undated balance to anchor the grid, but the
+      // user never entered a dated figure for the day, so it is not badged as one.
+      isRecorded: Boolean(recordByDate.get(key)) && recordByDate.get(key).implicit !== true
     });
     if (running !== null) {
       const step = scheduleByDate.get(key);
@@ -268,21 +332,29 @@ function buildRunwayRows({
     const ending = starting === null ? null : starting - obligationsToday.total;
     const obligationsOnlyCash = starting === null ? null : starting - obligationsToday.remainingTotal;
     // Every anchored row carries the same daily allowance, the closing day
-    // included: the cycle's budget divided once by the inclusive day count.
+    // included: the remaining-cycle budget divided once by the remaining day count.
     const safe = safeDaily;
+    // Counted from today, not from the top of the cycle. `dayNumber` is the day
+    // within the pay cycle, so on a cycle that opened six days ago it would start
+    // the cumulative at ×7 and finish at ×28 — overrunning the pot and showing a
+    // spend target for days that are already gone. Days before today have no
+    // place in a forward budget at all, so they read as an em-dash instead of a
+    // number the user could act on.
+    const daysFromToday = key < todayIso ? 0 : daysBetween(todayIso, key) + 1;
     // Derived from the row's own position, not accumulated, so it cannot drift.
     // The `min` is a float-safety net: `x / n * n` can land a hair under `x`,
     // and the final row must read the pot exactly.
-    const cumulativeSafeSpend = Math.min(safeTotal, safeDaily * dayNumber);
+    const cumulativeSafeSpend = daysFromToday > 0 ? Math.min(safeTotal, safeDaily * daysFromToday) : null;
 
     return {
       date: key,
       label: runwayLabel(key),
       shortLabel: longLabel(key),
       dayNumber,
+      daysFromToday,
       starting,
       safe,
-      safeDays: dayCount,
+      safeDays: safeDays ?? dayCount,
       safeTotal,
       obligationsOnlyCash,
       commitments: obligationsToday.commitments,
@@ -319,22 +391,61 @@ export function buildDailyRunway({
   const window = runwayWindow(today, payday, paydayDayOfMonth);
   if (!(amount > 0) || !window) return [];
 
-  const obligations = runwayObligations({ bills, commitments, currency, paidExpenses, ...window });
-  const { safeDaily, safeTotal } = safeSpendPlan({
-    obligationsOnlyCash: amount - obligations.total,
-    dayCount: window.dayCount
-  });
+  const todayIso = dayKey(today);
+  const endKey = dayKey(window.end);
+  const history = anchoredHistory(balanceHistory, { todayIso, balance: amount, currency, endKey });
+  const obligations = runwayObligations({ bills, commitments, currency, paidExpenses, todayKey: todayIso, ...window });
+  // One shared budget path, so this entry point and `runwayPlanner` cannot drift
+  // into reporting different daily figures for the same inputs.
+  const budget = runwayBudget({ history, amount, schedule: obligations.schedule, todayIso, endKey });
   return buildRunwayRows({
     ...window,
     amount,
     schedule: obligations.schedule,
     currency,
     maxDays,
-    safeDaily,
-    safeTotal,
-    history: balanceHistory,
+    safeDaily: budget.safeDaily,
+    safeTotal: budget.safeTotal,
+    safeDays: budget.days,
+    history,
     today
   });
+}
+
+/**
+ * The one place the Safe to Spend budget is derived.
+ *
+ * `pot` is measured from today's anchor: the balance on or before today, minus every
+ * charge from that anchor through the end of the window. Measuring it from the
+ * *earliest* record in the cycle (which is what filled in the most past days) is
+ * wrong for a budget, because the charges between that record and today have already
+ * been applied to the balance actually held today — subtracting them again charged
+ * for the same money twice, and produced a headline that disagreed with the table's
+ * own closing row.
+ *
+ * `days` counts today through the end of the window inclusive, so `safeDaily × days`
+ * is exactly `pot` on the closing row. Both the headline and the final grid row read
+ * from these same values, which is what makes the two impossible to disagree.
+ */
+function runwayBudget({ history, amount, schedule, todayIso, endKey }) {
+  const scheduleByDate = new Map(schedule.map((row) => [row.date, row]));
+  const endExclusive = endKey ? addDaysKey(endKey, 1) : '';
+  const anchor = normaliseBalanceHistory(history).filter((record) => !todayIso || record.date <= todayIso).at(-1) || null;
+  const chargedBetween = (fromKey, toKey) => {
+    let sum = 0;
+    for (let day = fromKey; day < toKey; day = addDaysKey(day, 1)) {
+      sum += scheduleByDate.get(day)?.total || 0;
+    }
+    return sum;
+  };
+  const pot = anchor && endExclusive ? anchor.amount - chargedBetween(anchor.date, endExclusive) : null;
+  // The days a user can still spend on. `anchorDate` is normally today, so this is
+  // today through the end of the cycle; it is computed from the anchor rather than
+  // from today so the two can never describe different spans.
+  const from = anchor ? anchor.date : todayIso;
+  const days = from && endKey ? Math.max(1, daysBetweenInclusive(from, endKey)) : 1;
+  const { safeDaily, safeTotal } = safeSpendPlan({ obligationsOnlyCash: pot === null ? amount : pot, days });
+  return { anchor, pot, days, safeDaily, safeTotal };
 }
 
 /** Build the grid and full-cycle summary figures used by the screens. */
@@ -354,44 +465,25 @@ export function runwayPlanner({
   const hasPayday = isValidDate(payday);
   const window = runwayWindow(today, payday, paydayDayOfMonth);
   const paydayPast = hasPayday && startOfDay(payday) < startOfDay(today);
+  const todayIso = dayKey(today);
+  const endKey = window ? dayKey(window.end) : '';
+  // The grid's opening anchor, plus today's record when the balance has never been
+  // dated. Without that implicit record a user with a perfectly good balance saw an
+  // empty grid and a prompt to record one they had already entered.
+  const history = anchoredHistory(balanceHistory, { todayIso, balance: amount, currency, endKey });
   const obligations = window
-    ? runwayObligations({ bills, commitments, currency, paidExpenses, ...window })
-    : { scheduledBills: 0, scheduledCommitments: 0, total: 0, schedule: [] };
+    ? runwayObligations({ bills, commitments, currency, paidExpenses, todayKey: todayIso, ...window })
+    : { scheduledBills: 0, scheduledCommitments: 0, total: 0, remainingTotal: 0, schedule: [] };
   const daysUntilPayday = window?.daysUntilPayday || 0;
   const dayCount = window?.dayCount || 0;
 
-  // The grid's opening anchor: the earliest recorded balance at or before the end
-  // of the window. The earliest is chosen deliberately, because it carries the
-  // furthest back and therefore fills in the most past days.
-  const endKey = window ? dayKey(window.end) : '';
-  const anchor = normaliseBalanceHistory(balanceHistory)
-    .filter((record) => record.date <= endKey)
-    .at(0) || null;
-
-  // The budget pot is what remains from that anchor once everything still charged
-  // before the end of the cycle is taken out, so the final row's cumulative
-  // safe spend and its ending balance meet at the same figure. Deriving it from
-  // today's balance instead would be wrong on a cycle view: today's balance has
-  // already had the past charges applied to it, so subtracting the whole cycle
-  // again would double-count them.
-  const scheduleByDate = new Map(obligations.schedule.map((row) => [row.date, row]));
-  const chargedBetween = (fromKey, toKey) => {
-    let sum = 0;
-    for (let day = fromKey; day < toKey; day = addDaysKey(day, 1)) {
-      sum += scheduleByDate.get(day)?.total || 0;
-    }
-    return sum;
-  };
-  const endExclusive = endKey ? addDaysKey(endKey, 1) : '';
-  const pot = anchor && endExclusive ? anchor.amount - chargedBetween(anchor.date, endExclusive) : null;
+  // One budget, derived once and read by both the headline cards and the grid, so
+  // the two can never report different figures for the same inputs.
+  const budget = window
+    ? runwayBudget({ history, amount, schedule: obligations.schedule, todayIso, endKey })
+    : { anchor: null, pot: null, days: 1, safeDaily: 0, safeTotal: Math.max(0, amount) };
+  const { anchor, pot, safeDaily, safeTotal } = budget;
   const cashAfterPlannedSpend = pot === null ? Math.max(0, amount) : pot;
-
-  // One division by the inclusive day count. `safeToday` is therefore exactly the
-  // first anchored row's `safe`, which is what keeps the headline card and the
-  // table from ever disagreeing.
-  const { safeDaily, safeTotal } = window && pot !== null
-    ? safeSpendPlan({ obligationsOnlyCash: cashAfterPlannedSpend, dayCount })
-    : { safeDaily: 0, safeTotal: Math.max(0, cashAfterPlannedSpend) };
   const safe = safeDaily;
   const rows = window && anchor
     ? buildRunwayRows({
@@ -402,7 +494,8 @@ export function runwayPlanner({
       maxDays,
       safeDaily,
       safeTotal,
-      history: balanceHistory,
+      safeDays: budget.days,
+      history,
       today
     })
     : [];
@@ -422,12 +515,19 @@ export function runwayPlanner({
     cycleStart: window ? dayKey(window.start) : '',
     cycleEnd: window ? dayKey(window.end) : '',
     anchorDate: anchor ? anchor.date : '',
+    // The day the budget is measured from, which is the day the daily figure covers
+    // forward. Distinct from `anchorDate` only in the rare case where a record exists
+    // after today, which the grid still badges but the budget does not measure from.
+    budgetFromDate: anchor ? anchor.date : '',
+    budgetDays: budget.days,
     dayCount,
     daysUntilPayday,
     renderedDays: rows.length,
     truncated: dayCount > renderLimit,
-    // True when no recorded balance backs the grid, so the views can say why it
-    // is empty instead of showing a silently blank panel.
+    // True when there is a window but nothing to measure the runway from at all —
+    // a payday rule with no balance. A dated record is no longer required, because an
+    // undated balance is adopted as today's, so this now means "no balance", not
+    // "no history".
     awaitingHistory: Boolean(window) && !anchor,
     pastDays: rows.filter((row) => row.isPast).length,
     todayIndex: rows.findIndex((row) => row.isToday),
@@ -437,15 +537,19 @@ export function runwayPlanner({
     safeTotal,
     cashAfterPlannedSpend,
     shortfall: Math.max(0, -cashAfterPlannedSpend),
-    // Summarised over the complete window, not the rendered rows. The old
-    // implementation read the last *rendered* row, which silently reported the
-    // wrong figure whenever the 45-day cap bit; the pot is computed over the whole
-    // cycle and is the same value when nothing is truncated.
+    // The closing row's own `ending` and this headline are now the same number by
+    // construction: both come from `pot`, which is measured from the same anchor and
+    // walked with the same schedule. Previously the headline subtracted the whole
+    // cycle from the earliest record while the grid re-anchored on later ones, so the
+    // two silently disagreed by exactly the charges between those records.
     projectedAtPayday: pot === null ? 0 : pot,
     firstStarting: firstAnchored ? firstAnchored.starting : null,
     scheduledBills: obligations.scheduledBills,
     scheduledCommitments: obligations.scheduledCommitments,
-    obligationTotal: obligations.total
+    obligationTotal: obligations.total,
+    // Only what is still ahead of today, so the Safe to Spend copy does not quote
+    // charges that have already been paid as if they were still reserved.
+    remainingObligations: obligations.remainingTotal
   };
 }
 

@@ -62,8 +62,8 @@
               <strong>{row.label}</strong>
               <small>
                 Day {row.dayNumber}
-                {#if row.isToday} · <span class="runway-flag">Today</span>{/if}
-                {#if row.isRecorded} · <span class="runway-flag recorded">Balance recorded</span>{/if}
+                {#if row.isToday}<span class="runway-flag">Today</span>{/if}
+                {#if row.isRecorded}<span class="runway-flag recorded">Recorded</span>{/if}
               </small>
             </th>
             <td>{cell(row.starting)}</td>
@@ -80,12 +80,13 @@
   <p class="hint">
     The grid covers the whole pay cycle, from this payday through to the day before the next, so
     days already gone are shaded. Days with no recorded balance show an em-dash rather than a
-    figure: enter a balance for that date above to fill them in, and a day marked
-    "Balance recorded" is a captured figure while the rest are carried forward from it.
-    Safe to spend is the cash remaining after every unpaid bill and Spend Item, divided by the
-    days in the cycle inclusive. The daily amount is the same on each row, so the projected
-    cumulative is that amount times the day number and the last row equals the cash after bills
-    and Spend Items. It is hypothetical, so it does not reduce Starting or Ending. Saturday and
-    Sunday bill due dates shift forward to Monday.
+    figure: enter a balance for that date above to fill them in, and a day marked "Recorded" is a
+    captured figure while the rest are carried forward from it.
+    Safe to spend is the cash remaining after every bill and Spend Item still ahead of today,
+    divided by the days from today to the end of the cycle. The daily amount is the same on each
+    row, so the projected cumulative counts up from today and the last row equals the cash after
+    bills and Spend Items. It is hypothetical, so it does not reduce Starting or Ending, and
+    days already gone show an em-dash because there is nothing left to budget for them. Saturday
+    and Sunday bill due dates shift forward to Monday.
   </p>
 {/if}

@@ -105,7 +105,7 @@
     <article class="fh-metric">
       <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
       <strong>{inDisplay(plan.safeToday)}</strong>
-      <p class="hint">After reserving {inDisplay(plan.obligationTotal)} of planned obligations; hypothetical</p>
+      <p class="hint">After reserving {inDisplay(plan.remainingObligations ?? plan.obligationTotal)} still to pay; hypothetical</p>
     </article>
     <article class="fh-metric">
       <p class="eyebrow">DAYS UNTIL NEXT PAYDAY</p>
