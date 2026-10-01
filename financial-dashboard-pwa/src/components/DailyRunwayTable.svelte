@@ -36,7 +36,7 @@
           <th scope="col">Starting</th>
           <th scope="col">Safe to spend</th>
           <th scope="col">Spend Items</th>
-          <th scope="col">Cumulative safe spend amount</th>
+          <th scope="col">Projected cumulative safe spend</th>
           <th scope="col">Scheduled bills</th>
           <th scope="col">Ending</th>
         </tr>
@@ -60,7 +60,10 @@
     </table>
   </div>
   <p class="hint">
-    Safe to spend reserves the remaining unpaid bills and Spend Items and divides the obligations-only cash by the remaining days before payday.
-    It is hypothetical, so it does not reduce Starting or Ending. Saturday and Sunday bill due dates shift forward to Monday.
+    Safe to spend is the cash remaining after every unpaid bill and Spend Item, divided by the
+    days from today to payday inclusive. The daily amount is the same on each row, so the
+    projected cumulative is that amount times the day number and the last row equals the
+    cash after bills and Spend Items. It is hypothetical, so it does not reduce Starting or
+    Ending. Saturday and Sunday bill due dates shift forward to Monday.
   </p>
 {/if}

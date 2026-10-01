@@ -4,6 +4,10 @@
  * Runway rules:
  *   - one row per day from today through payday, inclusive
  *   - safe to spend reserves all unpaid bills and Spend Items remaining in the cycle
+ *   - that reserve is divided once by the inclusive day count, so the daily
+ *     figure is a flat cycle budget and the cumulative column is exactly
+ *     `safeDaily × dayNumber`, finishing on that reserve — it can never exceed
+ *     the cash available
  *   - safe to spend is hypothetical and never reduces Starting or Ending
  *   - Ending changes only for actual Spend Items and bills on that day
  *   - Saturday / Sunday bill due dates shift forward to Monday
@@ -123,16 +127,42 @@ function runwayObligations({ bills, commitments, currency, start, end, dayCount,
   };
 }
 
-function safeToSpend({ obligationsOnlyCash, daysUntilPayday }) {
-  const denominator = Math.max(1, Math.max(0, daysUntilPayday) - 1);
-  return Math.max(0, num(obligationsOnlyCash)) / denominator;
+/**
+ * Safe to Spend is a *budget* for the whole cycle, not a per-day recomputation.
+ *
+ * The pot is `cash after every unpaid bill and Spend Item still in the cycle`
+ * (the "CASH AFTER BILLS & SPEND ITEMS" figure). It is divided once by the
+ * inclusive `dayCount` — today through payday — giving one flat `safeDaily` that
+ * every row shows. The cumulative column is then exactly `safeDaily × dayNumber`
+ * (tomorrow ×2, the day after ×3), so the final row is
+ * `safeDaily × dayCount` = the pot itself, by construction rather than by
+ * accumulation. The column therefore can never exceed the cash available.
+ *
+ * The two defects this replaces, which were the same bug seen from two sides:
+ *   - dividing the pot by `daysUntilPayday - 1` inflated the daily figure, and
+ *     the clamped denominator let both the day before payday *and* payday itself
+ *     claim the entire balance
+ *   - dividing the pot again by each row's shrinking day count meant every row
+ *     was computed as though it were the first day. The numerator stayed pinned
+ *     at the full balance (safe spend is hypothetical, so it is never deducted)
+ *     while the divisor fell to 1, so the last rows each advised spending the
+ *     whole balance. Summing those independent hypotheticals counted the same
+ *     money once per day and the cumulative ran several times over the real
+ *     figure
+ *
+ * `dayCount` is 1 when payday is today, so the division is safe without a
+ * special case: a single row reading ×1.
+ */
+export function safeSpendPlan({ obligationsOnlyCash, dayCount }) {
+  const safeTotal = Math.max(0, num(obligationsOnlyCash));
+  const days = Math.max(1, Math.trunc(num(dayCount)));
+  return { safeTotal, safeDaily: safeTotal / days, dayCount: days };
 }
 
-function buildRunwayRows({ start, end, dayCount, amount, schedule, currency, maxDays }) {
+function buildRunwayRows({ start, end, dayCount, amount, schedule, currency, maxDays, safeDaily = 0, safeTotal = 0 }) {
   const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
   const scheduleByDate = new Map(schedule.map((row) => [row.date, row]));
   let running = amount;
-  let cumulativeSafeSpend = 0;
   const renderedDates = datesThrough(start, end, renderLimit);
 
   return renderedDates.map((date, index) => {
@@ -141,19 +171,26 @@ function buildRunwayRows({ start, end, dayCount, amount, schedule, currency, max
     const obligationsToday = scheduleByDate.get(key) || { commitments: 0, bills: 0, total: 0, remainingTotal: 0 };
     const obligationsOnlyCash = starting - obligationsToday.remainingTotal;
     const daysUntilPayday = Math.max(0, daysBetween(date, end));
-    const safe = safeToSpend({ obligationsOnlyCash, daysUntilPayday });
+    const dayNumber = index + 1;
+    // Every row carries the same daily allowance, payday included: it is the
+    // cycle's budget divided once by the inclusive day count.
+    const safe = safeDaily;
     const ending = starting - obligationsToday.total;
     running = ending;
-    cumulativeSafeSpend += safe;
+    // Derived from the row's own position, not accumulated, so it cannot drift.
+    // The `min` is a float-safety net: `x / n * n` can land a hair under `x`,
+    // and the final row must read the pot exactly.
+    const cumulativeSafeSpend = Math.min(safeTotal, safeDaily * dayNumber);
 
     return {
       date: key,
       label: runwayLabel(date),
       shortLabel: longLabel(date),
-      dayNumber: index + 1,
+      dayNumber,
       starting,
       safe,
-      safeDays: Math.max(1, daysUntilPayday - 1),
+      safeDays: dayCount,
+      safeTotal,
       obligationsOnlyCash,
       commitments: obligationsToday.commitments,
       cumulativeSafeSpend,
@@ -183,7 +220,11 @@ export function buildDailyRunway({
   if (!(amount > 0) || !window) return [];
 
   const obligations = runwayObligations({ bills, commitments, currency, paidExpenses, ...window });
-  return buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays });
+  const { safeDaily, safeTotal } = safeSpendPlan({
+    obligationsOnlyCash: amount - obligations.total,
+    dayCount: window.dayCount
+  });
+  return buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays, safeDaily, safeTotal });
 }
 
 /** Build the grid and full-cycle summary figures used by the screens. */
@@ -206,11 +247,17 @@ export function runwayPlanner({
     : { scheduledBills: 0, scheduledCommitments: 0, total: 0, schedule: [] };
   const cashAfterPlannedSpend = window ? amount - obligations.total : amount;
   const daysUntilPayday = window?.daysUntilPayday || 0;
-  const safe = window ? safeToSpend({ obligationsOnlyCash: cashAfterPlannedSpend, daysUntilPayday }) : 0;
-  const rows = window && amount > 0
-    ? buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays })
-    : [];
   const dayCount = window?.dayCount || 0;
+  // One division by the inclusive day count. `safeToday` is therefore exactly the
+  // first row's `safe`, which is what keeps the headline card and the table from
+  // ever disagreeing.
+  const { safeDaily, safeTotal } = window
+    ? safeSpendPlan({ obligationsOnlyCash: cashAfterPlannedSpend, dayCount })
+    : { safeDaily: 0, safeTotal: Math.max(0, cashAfterPlannedSpend) };
+  const safe = safeDaily;
+  const rows = window && amount > 0
+    ? buildRunwayRows({ ...window, amount, schedule: obligations.schedule, currency, maxDays, safeDaily, safeTotal })
+    : [];
   const renderLimit = Number.isFinite(Number(maxDays)) ? Math.max(0, Math.trunc(Number(maxDays))) : MAX_RUNWAY_DAYS;
 
   return {
@@ -224,6 +271,8 @@ export function runwayPlanner({
     renderedDays: rows.length,
     truncated: dayCount > renderLimit,
     safeToday: safe,
+    safeDaily,
+    safeTotal,
     cashAfterPlannedSpend,
     shortfall: Math.max(0, -cashAfterPlannedSpend),
     projectedAtPayday: window ? amount - obligations.total : 0,

@@ -34,8 +34,12 @@ provider of any kind.
   pension rows keep their own currency and can be edited or deleted.
 - Cash flow uses a daily table plus a lightweight inline runway trajectory, a workbook-style
   current-month paid/unpaid remainder table, and a category doughnut. Safe to Spend is a
-  hypothetical daily amount based on the obligations-only balance and the remaining non-payday
-  days; it does not reduce Starting or Ending. Saturday and Sunday bill due dates shift to Monday.
+  hypothetical daily amount: the balance after every unpaid bill and Spend Item still due
+  in the cycle, divided by the inclusive number of days from today to payday. The daily figure
+  is therefore identical on every row, the projected cumulative column is that amount times the
+  day number, and its final row equals the cash after bills and Spend Items — so it can never
+  exceed the cash available. It does not reduce Starting or Ending. Saturday and Sunday bill due
+  dates shift to Monday.
 - Position, investment, and pension updates append SCD Type 2 snapshots (`validFrom`, `validTo`,
   `currentFlag`) under a stable logical id instead of rewriting history. Pension pots can have
   individual annual growth rates, compounded monthly as `(1 + annual rate)^(1/12) - 1`, and the

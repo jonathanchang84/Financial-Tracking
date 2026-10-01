@@ -258,7 +258,7 @@
       <div>
         <p class="eyebrow">DAILY VIEW</p>
         <h3>Daily runway table</h3>
-        <p class="hint">One row per day: starting balance, hypothetical Safe to Spend, Spend Items, cumulative safe spend amount, bills and the actual obligations-only ending balance.</p>
+        <p class="hint">One row per day: starting balance, hypothetical Safe to Spend, Spend Items, projected cumulative safe spend (today's amount times the day number), bills and the actual obligations-only ending balance.</p>
       </div>
     </div>
     <DailyRunwayTable
