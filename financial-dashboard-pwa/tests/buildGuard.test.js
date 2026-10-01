@@ -7,7 +7,7 @@ import { parseWorkerBuildId } from '../src/services/buildGuard.js';
 const workerSource = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 
 test('reads the build id the service worker advertises', () => {
-  assert.equal(parseWorkerBuildId(workerSource), 'findash-v13');
+  assert.equal(parseWorkerBuildId(workerSource), 'findash-v14');
 });
 
 test('ignores source that declares no build id', () => {

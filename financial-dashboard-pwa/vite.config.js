@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 /**
- * The service worker owns the build id (`const VERSION = 'findash-v13'`). Read it
+ * The service worker owns the build id (`const VERSION = 'findash-v14'`). Read it
  * here so the compiled bundle and the deployed worker can never drift apart —
  * `src/services/buildGuard.js` compares the two to spot a stale tab.
  */
