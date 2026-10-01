@@ -85,6 +85,9 @@ test('runway excludes paid bills and spend items from safe-to-spend obligations'
     currency: 'USD',
     payday: '2026-09-04',
     today: '2026-09-01',
+    // The grid is anchored on recorded history, so the scenario records the
+    // opening balance on the first day of the window.
+    balanceHistory: [{ id: 'balance-2026-09-01', date: '2026-09-01', amount: 1000, currencyCode: 'USD' }],
     bills: [{ id: 'rent', amount: 100, dueDay: 2, currencyCode: 'USD' }],
     commitments: [{ id: 'food', date: '2026-09-02', amount: 50, currencyCode: 'USD' }],
     paidExpenses: { 'bill:rent:2026-09': true, 'commitment:food': true }

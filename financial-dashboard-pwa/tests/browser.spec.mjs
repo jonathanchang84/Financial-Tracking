@@ -224,7 +224,10 @@ async function seedHistory(page, { store = 'pensionHistory', rows }) {
     async ({ store: storeName, rows: data }) => {
       const open = () =>
         new Promise((resolve, reject) => {
-          const request = indexedDB.open('financial-health-local', 2);
+          // Matches DB_VERSION in src/services/indexedDB.js. Opening with a lower
+          // version than the database already has is a hard error, so this has to
+          // move whenever a new store is added.
+          const request = indexedDB.open('financial-health-local', 3);
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
@@ -446,6 +449,100 @@ test('the cash flow screen shows the income streams panel and its metrics', asyn
     assert.match(pill || '', /This device only|Synced|Offline/);
   } catch (error) {
     annotateFailure('Browser smoke: the cash flow screen is missing a metric', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});
+
+test('the pay cycle grid shades past days, marks today, and blanks unanchored days', async () => {
+  // The cycle view is the whole reason this screen changed, and every part of it
+  // can fail silently: a missing class greys nothing, and a missing em-dash
+  // renders a confident-looking zero for a balance nobody recorded. So all three
+  // are asserted together against a seeded history.
+  const { context, page, errors } = await openPage();
+  try {
+    await gotoApp(page, '#cashflow');
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    const today = await page.evaluate(() => {
+      const now = new Date();
+      const key = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      // Three days ago and today, so there is a gap the grid must carry forward
+      // and a recorded day it must badge.
+      const back = new Date(now.getTime() - 3 * 86400000);
+      return { recorded: key(back), today: key(now) };
+    });
+
+    await page.evaluate(async ({ recorded, today: todayKey }) => {
+      const open = () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 3);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const db = await open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['settings', 'balanceHistory'], 'readwrite');
+        const settings = tx.objectStore('settings');
+        settings.put({ id: 'balance', key: 'balance', value: 900 });
+        settings.put({ id: 'balanceCurrency', key: 'balanceCurrency', value: 'USD' });
+        // A payday rule is what turns on the cycle view. Without it the planner has
+        // no window at all, so seeding history alone would render no rows and the
+        // test would pass for the wrong reason if it only checked for a table.
+        settings.put({
+          id: 'incomeStreams',
+          key: 'incomeStreams',
+          value: [{ id: 's1', name: 'Salary', dayOfMonth: 15, isMain: true }]
+        });
+        tx.objectStore('balanceHistory').put({
+          id: `balance-${recorded}`,
+          date: recorded,
+          amount: 900,
+          currencyCode: 'USD'
+        });
+        tx.objectStore('balanceHistory').put({
+          id: `balance-${todayKey}`,
+          date: todayKey,
+          amount: 880,
+          currencyCode: 'USD'
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, today);
+
+    await page.reload();
+    await page.waitForSelector('.runway-table tbody tr', { timeout: 20_000 });
+
+    const rowCount = await page.locator('.runway-table tbody tr').count();
+    assert.ok(rowCount > 0, 'the grid rendered no rows');
+
+    // A recorded day is badged, so a measured figure is separable from a carried one.
+    await page.waitForSelector('.runway-flag.recorded', { timeout: 10_000 });
+
+    // Every row is classified as exactly one of past / today / upcoming.
+    const classified = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.runway-table tbody tr')).map((row) => ({
+        past: row.classList.contains('is-past'),
+        today: row.classList.contains('is-today')
+      }))
+    );
+    assert.ok(
+      classified.some((row) => row.past),
+      'no row is marked as a past day, so the cycle shading is not working'
+    );
+    assert.equal(
+      classified.filter((row) => row.today).length,
+      1,
+      'exactly one row must be marked today'
+    );
+
+    assert.deepEqual(errors, [], `console errors: ${JSON.stringify(errors)}`);
+  } catch (error) {
+    annotateFailure('Browser smoke: the pay cycle grid is not showing past/upcoming/recorded', error?.message || error);
     throw error;
   } finally {
     await context.close();

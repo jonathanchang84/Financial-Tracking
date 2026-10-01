@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 
 import { buildDailyRunway, runwayPlanner, growthPercent, monthGrowth, latestBySeries, num, parseNonNegativeNumber, safeSpendPlan } from '../src/services/runway.js';
 
+// The grid is anchored on recorded balance history rather than on a bare
+// `balance` figure, so the shared fixture carries one record on the start day.
+// `balance` stays as the current available figure the screens read; the record is
+// what the rows are built from.
 const base = {
   balance: 900,
   currency: 'USD',
   payday: '2026-03-10',
   today: '2026-03-01',
+  balanceHistory: [{ id: 'balance-2026-03-01', date: '2026-03-01', amount: 900, currencyCode: 'USD' }],
   bills: [],
   commitments: []
 };
@@ -219,6 +224,8 @@ test('planner summarises obligations while truncating only rendered rows', () =>
     ...base,
     balance: 9000,
     payday: '2026-05-01',
+    // Re-anchored on the longer window's opening balance.
+    balanceHistory: [{ id: 'balance-2026-03-01', date: '2026-03-01', amount: 9000, currencyCode: 'USD' }],
     commitments: [{ name: 'Late repair', date: '2026-04-20', amount: 300, currencyCode: 'USD' }]
   });
   assert.equal(longPlan.dayCount, 62);
@@ -251,12 +258,186 @@ test('obligations larger than the balance produce a visible shortfall and no neg
   const plan = runwayPlanner({
     ...base,
     balance: 100,
+    // Re-anchored: the scenario's whole point is a 100 opening balance, so the
+    // record has to say so rather than inherit the 900 the shared fixture uses.
+    balanceHistory: [{ id: 'balance-2026-03-01', date: '2026-03-01', amount: 100, currencyCode: 'USD' }],
     commitments: [{ name: 'Major purchase', date: '2026-03-05', amount: 150, currencyCode: 'USD' }]
   });
   assert.equal(plan.safeToday, 0);
   assert.equal(plan.cashAfterPlannedSpend, -50);
   assert.equal(plan.shortfall, 50);
   assert.equal(plan.projectedAtPayday, -50);
+});
+
+test('the grid covers the whole pay cycle when a payday rule is set', () => {
+  // Payday on the 15th, today the 20th: the cycle opened on the 15th and closes
+  // the day before the next payday, so past days are part of the view.
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [{ id: 'b', date: '2026-10-15', amount: 900, currencyCode: 'USD' }],
+    bills: [],
+    commitments: []
+  });
+  assert.equal(plan.isCycle, true);
+  assert.equal(plan.cycleStart, '2026-10-15');
+  // The next payday is the 15th of November, which is a Sunday, so it is brought
+  // back to Friday the 13th and the cycle closes the day before that.
+  assert.equal(plan.cycleEnd, '2026-11-12', 'the day before the weekend-shifted payday');
+  assert.equal(plan.dayCount, 29, '15 Oct through 12 Nov inclusive');
+  assert.equal(plan.rows.length, 29);
+  assert.equal(plan.rows[0].date, '2026-10-15');
+  assert.equal(plan.rows.at(-1).date, '2026-11-12');
+  // "Days until payday" still counts to the real payday, not to the cycle end.
+  assert.equal(plan.daysUntilPayday, 11);
+});
+
+test('a payday today opens the cycle rather than collapsing it', () => {
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-15',
+    paydayDayOfMonth: 15,
+    today: '2026-10-15',
+    balanceHistory: [{ id: 'b', date: '2026-10-15', amount: 900, currencyCode: 'USD' }],
+    bills: [],
+    commitments: []
+  });
+  assert.equal(plan.cycleStart, '2026-10-15');
+  // 15 November 2026 is a Sunday, so that payday lands on Friday the 13th.
+  assert.equal(plan.cycleEnd, '2026-11-12');
+  assert.equal(plan.dayCount, 29);
+  assert.equal(plan.rows.length, 29);
+  assert.equal(plan.rows[0].isToday, true, 'payday itself is today, not the past');
+});
+
+test('without a payday rule the grid keeps the old today-through-payday window', () => {
+  const plan = runwayPlanner(base);
+  assert.equal(plan.isCycle, false);
+  assert.equal(plan.dayCount, 10, 'today 1 Mar through payday 10 Mar');
+  assert.equal(plan.rows[0].date, '2026-03-01');
+  assert.equal(plan.rows.at(-1).date, '2026-03-10');
+});
+
+test('rows are flagged past, today or upcoming from the grid, not re-derived in the view', () => {
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [{ id: 'b', date: '2026-10-15', amount: 900, currencyCode: 'USD' }],
+    bills: [],
+    commitments: []
+  });
+  const flags = plan.rows.map((row) => (row.isPast ? 'past' : row.isToday ? 'today' : 'upcoming'));
+  assert.equal(flags.filter((flag) => flag === 'past').length, 5, '15 Oct to 19 Oct');
+  assert.equal(flags.filter((flag) => flag === 'today').length, 1, 'exactly one today');
+  // 21 Oct through the 12th, the day before the weekend-shifted next payday.
+  assert.equal(flags.filter((flag) => flag === 'upcoming').length, 23);
+  assert.equal(plan.pastDays, 5);
+  assert.equal(plan.todayIndex, 5);
+});
+
+test('a day before the first record is left blank rather than given a guessed balance', () => {
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    // First record is the 18th, so the 15th-17th have nothing behind them.
+    balanceHistory: [{ id: 'b', date: '2026-10-18', amount: 900, currencyCode: 'USD' }],
+    bills: [],
+    commitments: []
+  });
+  const [first, second, third, fourth] = plan.rows;
+  assert.equal(first.anchored, false);
+  assert.equal(first.starting, null, 'unknown, not zero');
+  assert.equal(first.ending, null);
+  assert.equal(second.starting, null);
+  assert.equal(third.starting, null);
+  assert.equal(fourth.date, '2026-10-18');
+  assert.equal(fourth.starting, 900, 'the record anchors its own day');
+  assert.equal(plan.awaitingHistory, false, 'some history exists');
+});
+
+test('an unrecorded day flows forward from the record before it', () => {
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [{ id: 'b', date: '2026-10-15', amount: 900, currencyCode: 'USD' }],
+    // A bill charged on the 16th reduces every day after it.
+    bills: [{ id: 'rent', amount: 100, dueDay: 16, currencyCode: 'USD' }],
+    commitments: []
+  });
+  const byDate = new Map(plan.rows.map((row) => [row.date, row]));
+  assert.equal(byDate.get('2026-10-15').starting, 900, 'the record day');
+  assert.equal(byDate.get('2026-10-15').ending, 900, 'nothing due that day');
+  assert.equal(byDate.get('2026-10-16').starting, 900, 'the bill is charged during the 16th');
+  assert.equal(byDate.get('2026-10-16').ending, 800);
+  assert.equal(byDate.get('2026-10-17').starting, 800, 'and carries forward from there');
+  assert.equal(byDate.get('2026-10-20').starting, 800);
+  assert.equal(byDate.get('2026-10-20').anchorDate, '2026-10-15');
+});
+
+test('a recorded day is marked so a measured figure is distinguishable from a flowed one', () => {
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [
+      { id: 'b1', date: '2026-10-15', amount: 900, currencyCode: 'USD' },
+      { id: 'b2', date: '2026-10-18', amount: 850, currencyCode: 'USD' }
+    ],
+    bills: [],
+    commitments: []
+  });
+  const byDate = new Map(plan.rows.map((row) => [row.date, row]));
+  assert.equal(byDate.get('2026-10-15').isRecorded, true);
+  assert.equal(byDate.get('2026-10-18').isRecorded, true);
+  assert.equal(byDate.get('2026-10-18').starting, 850, 'the newer record wins from its own day');
+  assert.equal(byDate.get('2026-10-17').isRecorded, false, 'flowed from the earlier record');
+  assert.equal(plan.recordedDays, 2);
+});
+
+test('with no history at all the grid is empty and says so', () => {
+  const plan = runwayPlanner({ ...base, balanceHistory: [] });
+  assert.equal(plan.rows.length, 0, 'no anchor, so no invented rows');
+  assert.equal(plan.awaitingHistory, true);
+  assert.equal(plan.safeToday, 0, 'no budget without an anchor to measure from');
+});
+
+test('the budget pot is measured from the anchor, not double-counted from today', () => {
+  // 1000 recorded on the 15th, with a 100 bill charged on the 16th and nothing
+  // else in the cycle. The pot must be 900: 1000 minus the one charge. Reading
+  // today's balance and subtracting the whole cycle again would double-count the
+  // charge, because today's balance has already had it applied.
+  const plan = runwayPlanner({
+    balance: 900,
+    currency: 'USD',
+    payday: '2026-10-31',
+    paydayDayOfMonth: 15,
+    today: '2026-10-20',
+    balanceHistory: [{ id: 'b', date: '2026-10-15', amount: 1000, currencyCode: 'USD' }],
+    bills: [{ id: 'rent', amount: 100, dueDay: 16, currencyCode: 'USD' }],
+    commitments: []
+  });
+  assert.equal(plan.cashAfterPlannedSpend, 900, 'the pot after the single charge');
+  assert.equal(plan.safeTotal, 900);
+  assert.equal(plan.safeDaily, 900 / 29, 'one division by the inclusive cycle length');
+  // The closing row's cumulative safe spend and ending balance meet at the pot.
+  const last = plan.rows.at(-1);
+  assert.equal(last.cumulativeSafeSpend, 900);
+  assert.equal(last.ending, 900);
 });
 
 test('growth helpers match the historic month-on-month wording', () => {

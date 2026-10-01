@@ -255,6 +255,7 @@ export const transactions = entityStore('transactions');
 export const budgets = entityStore('budgets');
 export const accounts = entityStore('accounts');
 export const snapshots = entityStore('snapshots');
+export const balanceHistory = entityStore('balanceHistory');
 
 export const ENTITY_STORES = {
   netWorthEntries,
@@ -268,7 +269,8 @@ export const ENTITY_STORES = {
   transactions,
   budgets,
   accounts,
-  snapshots
+  snapshots,
+  balanceHistory
 };
 
 /** Every entity store plus the settings store, keyed by store name. */

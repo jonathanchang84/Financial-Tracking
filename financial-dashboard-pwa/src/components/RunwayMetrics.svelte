@@ -11,17 +11,24 @@
   <article class="fh-metric">
     <p class="eyebrow">SAFE TO SPEND EACH DAY</p>
     <strong>{inDisplay(plan.safeToday)}</strong>
-    <p class="hint">After reserving {inDisplay(plan.obligationTotal)}; hypothetical and spread before payday</p>
+    <p class="hint">
+      {plan.isCycle
+        ? 'Spread across the whole pay cycle; after reserving'
+        : 'After reserving'}
+      {inDisplay(plan.obligationTotal)}; hypothetical
+    </p>
   </article>
   <article class="fh-metric">
     <p class="eyebrow">DAYS UNTIL PAYDAY</p>
     <strong>{plan.daysUntilPayday || 0}</strong>
     <p class="hint">
       {mainPayday
-        ? `Main payday ${mainPayday.weekday} ${mainPayday.label} · ${plan.dayCount || 0} inclusive grid day(s)`
+        ? `Main payday ${mainPayday.weekday} ${mainPayday.label}`
         : plan.paydayPast
-          ? 'Payday has passed — choose a future day'
+          ? 'Payday has passed — add an income stream to see the runway'
           : 'Add an income stream to see the runway'}
+      {#if plan.isCycle}<br />Cycle of {plan.dayCount || 0} day(s), from {plan.cycleStart} to {plan.cycleEnd}{/if}
+      {#if plan.pastDays > 0}<br />{plan.pastDays} day(s) of this cycle are already behind you{/if}
       {#if plan.truncated}<br />Grid shows the first {plan.renderedDays} days{/if}
     </p>
   </article>

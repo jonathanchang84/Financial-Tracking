@@ -11,7 +11,7 @@
  */
 
 export const DB_NAME = 'financial-health-local';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /** Exact historic store list (order preserved for readable diagnostics). */
 export const STORES = [
@@ -27,7 +27,8 @@ export const STORES = [
   'transactions',
   'budgets',
   'accounts',
-  'snapshots'
+  'snapshots',
+  'balanceHistory'
 ];
 
 export const SETTINGS_STORE = 'settings';

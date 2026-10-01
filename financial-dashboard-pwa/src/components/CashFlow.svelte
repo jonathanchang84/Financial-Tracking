@@ -9,12 +9,15 @@
     saveSettings,
     saveSetting,
     bills,
+    balanceHistory,
     commitments,
     displayCurrency,
     money,
     convertCurrency
   } from '../stores/finance.js';
   import { runwayPlanner, num, currencyOf } from '../services/runway.js';
+  import { balanceRecordId } from '../services/balanceHistory.js';
+  import { saveRecord } from '../services/commands.js';
   import {
     MAX_INCOME_STREAMS,
     createStream,
@@ -75,10 +78,22 @@
       balance: $settings.balance,
       currency: balanceCurrency,
       payday: runwayPayday,
+      // The payday rule, not just the next date: the cycle view needs to know
+      // when the cycle opened, which a single future date cannot say.
+      paydayDayOfMonth: mainPayday?.dayOfMonth ?? null,
+      balanceHistory: $balanceHistory,
       bills: $bills,
       commitments: $commitments,
       paidExpenses
     })
+  );
+
+  // The grid is anchored on recorded balances, so with no history it has nothing
+  // to show. Say so and point at the fix rather than rendering an empty panel.
+  const runwayEmptyMessage = $derived(
+    plan.awaitingHistory
+      ? 'Record a dated balance to see the runway. Enter the balance with the date it was true, and the cycle will fill in from there.'
+      : 'Set your balance and payday to see the daily runway.'
   );
 
   const inDisplay = (value, from = balanceCurrency) =>
@@ -130,8 +145,22 @@
 
   // Persist the balance. Invalid drafts are rejected by CashSettingsPanel before
   // this is reached, and the last valid stored balance is left untouched.
+  //
+  // A dated record is written alongside the scalar, because the cycle view anchors
+  // its past days on recorded balances rather than inventing them. `balanceDate`
+  // is stripped before saving so it never lands in the settings store as a
+  // stray key; the history record is where a date belongs.
   async function saveCashSettings(next) {
-    await saveSettings(next);
+    const { balanceDate, ...settings } = next;
+    await saveSettings(settings);
+    const date = dayKey(balanceDate);
+    if (date) {
+      await saveRecord(
+        'balanceHistory',
+        { id: balanceRecordId(date), date, amount: num(next.balance), currencyCode: next.balanceCurrency },
+        { silent: true }
+      );
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -258,13 +287,13 @@
       <div>
         <p class="eyebrow">DAILY VIEW</p>
         <h3>Daily runway table</h3>
-        <p class="hint">One row per day: starting balance, hypothetical Safe to Spend, Spend Items, projected cumulative safe spend (today's amount times the day number), bills and the actual obligations-only ending balance.</p>
+        <p class="hint">One row per day across the whole pay cycle: starting balance, hypothetical Safe to Spend, Spend Items, projected cumulative safe spend (that amount times the day number), bills and the actual ending balance. Days already gone are shaded, and a day marked "Balance recorded" is one you entered a balance for.</p>
       </div>
     </div>
     <DailyRunwayTable
       rows={plan.rows}
       currency={balanceCurrency}
-      emptyMessage="Set your balance and payday to see the daily runway."
+      emptyMessage={runwayEmptyMessage}
     />
   </section>
 

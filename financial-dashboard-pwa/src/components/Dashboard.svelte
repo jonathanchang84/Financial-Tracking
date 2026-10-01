@@ -12,6 +12,7 @@
     expensesLogged,
     budgets,
     bills,
+    balanceHistory,
     commitments,
     displayCurrency,
     money,
@@ -35,6 +36,10 @@
       balance: $settings.balance,
       currency: balanceCurrency,
       payday,
+      // Same wiring as Cash flow: the cycle view needs the payday rule and the
+      // recorded balances its past days are anchored on.
+      paydayDayOfMonth: mainPayday?.dayOfMonth ?? null,
+      balanceHistory: $balanceHistory,
       bills: $bills,
       commitments: $commitments,
       paidExpenses: $settings.paidExpenses || {}

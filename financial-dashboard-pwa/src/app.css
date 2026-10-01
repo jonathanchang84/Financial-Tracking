@@ -14,6 +14,11 @@
   --positive: #047857;
   --radius: 14px;
   --shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+  /* Past rows in the runway grid. A token rather than a literal so the dark
+     theme can use a fill that is actually visible against its own panel; a
+     single hardcoded light grey disappears on a dark background. */
+  --past-fill: #f1f3f6;
+  --today-fill: #ecfdf5;
 }
 [data-theme='dark'] {
   --bg: #0b0f14;
@@ -29,6 +34,11 @@
   --warning: #fbbf24;
   --positive: #34d399;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  /* Dark equivalents: the past fill is lighter than the panel so a past row
+     still reads as "behind us" instead of vanishing, and today is tinted with the
+     accent at low opacity to keep the same emphasis the light theme gets. */
+  --past-fill: #1a2432;
+  --today-fill: rgba(45, 212, 191, 0.10);
 }
 
 * { box-sizing: border-box; }
@@ -225,6 +235,22 @@ table.fh-table caption { text-align: left; }
 .runway-table col.runway-date { width: 120px; }
 .runway-table col.runway-number { width: 135px; }
 .runway-table col.runway-cumulative { width: 175px; }
+/* The cycle view spans days already gone, so a past row is shaded to read as
+   history, today is tinted to stand out, and an unanchored day is dimmed again
+   because its cells are em-dashes rather than figures. Today wins over past so a
+   row that is somehow both is still findable. */
+.runway-table tbody tr.is-past { background: var(--past-fill); }
+.runway-table tbody tr.is-past td,
+.runway-table tbody tr.is-past th { color: var(--muted); }
+.runway-table tbody tr.is-today { background: var(--today-fill); }
+.runway-table tbody tr.is-unanchored td,
+.runway-table tbody tr.is-unanchored th { opacity: 0.65; }
+.runway-table .runway-flag {
+  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px;
+  font-size: 0.65rem; letter-spacing: 0.03em; text-transform: uppercase;
+  border: 1px solid currentColor; color: var(--accent);
+}
+.runway-table .runway-flag.recorded { color: var(--muted); }
 .fh-table.current-month-table { table-layout: fixed; min-width: 780px; }
 .current-month-table col.expense-date { width: 112px; }
 .current-month-table col.expense-item { width: 180px; }

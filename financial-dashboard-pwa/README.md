@@ -33,13 +33,18 @@ provider of any kind.
 - Overview display currency converts figures with the historic fixed rates. Account, holding, and
   pension rows keep their own currency and can be edited or deleted.
 - Cash flow uses a daily table plus a lightweight inline runway trajectory, a workbook-style
-  current-month paid/unpaid remainder table, and a category doughnut. Safe to Spend is a
-  hypothetical daily amount: the balance after every unpaid bill and Spend Item still due
-  in the cycle, divided by the inclusive number of days from today to payday. The daily figure
-  is therefore identical on every row, the projected cumulative column is that amount times the
-  day number, and its final row equals the cash after bills and Spend Items — so it can never
-  exceed the cash available. It does not reduce Starting or Ending. Saturday and Sunday bill due
-  dates shift to Monday.
+  current-month paid/unpaid remainder table, and a category doughnut. The daily table covers the
+  **whole pay cycle** — from the payday that opened it through to the day before the next one — so
+  days already gone are shaded, today is marked, and each row is flagged for whether a balance was
+  recorded on that day. Each day's starting balance comes from the nearest **dated balance record**
+  on or before it, carried forward by the bills and Spend Items charged since; a day with no record
+  behind it shows an em-dash rather than a figure, so history fills in at the pace it is entered.
+  Safe to Spend is a hypothetical daily amount: the balance after every unpaid bill and Spend Item
+  still due in the cycle, divided by the inclusive number of days in the cycle. The daily figure is
+  therefore identical on every row, the projected cumulative column is that amount times the day
+  number, and its final row equals the cash after bills and Spend Items — so it can never exceed
+  the cash available. It does not reduce Starting or Ending. Saturday and Sunday bill due dates
+  shift to Monday.
 - Position, investment, and pension updates append SCD Type 2 snapshots (`validFrom`, `validTo`,
   `currentFlag`) under a stable logical id instead of rewriting history. Pension pots can have
   individual annual growth rates, compounded monthly as `(1 + annual rate)^(1/12) - 1`, and the

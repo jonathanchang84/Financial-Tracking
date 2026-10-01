@@ -13,6 +13,7 @@
  */
 import {
   dayKey,
+  daysBetweenInclusive,
   longLabel,
   occurrenceInMonth,
   shiftToPreviousFriday,
@@ -84,6 +85,64 @@ export function nextStreamOccurrence(dayOfMonth, from = new Date()) {
     if (date >= start) return { date, raw };
   }
   return null;
+}
+
+/**
+ * The most recent payday on or before `from`, keeping the unshifted date so the
+ * UI can explain a weekend adjustment.
+ *
+ * The mirror of `nextStreamOccurrence`, and deliberately a separate function
+ * rather than a flag on that one: the runway anchors the pay cycle on the
+ * payday that has just passed, and the two directions have genuinely different
+ * edge cases. Walking backwards from the 1st of a month means asking about the
+ * previous month, and `shiftToPreviousFriday` can pull the occurrence back
+ * across a month boundary, so the search is anchored per month rather than by
+ * subtracting a fixed number of days.
+ */
+export function previousStreamOccurrence(dayOfMonth, from = new Date()) {
+  const day = normaliseIncomeDay(dayOfMonth);
+  if (day === null) return null;
+  const start = startOfDay(from);
+  for (let offset = 0; offset < 14; offset += 1) {
+    const month = new Date(start.getFullYear(), start.getMonth() - offset, 1);
+    const raw = occurrenceInMonth(day, month);
+    const date = shiftToPreviousFriday(raw);
+    if (date <= start) return { date, raw };
+  }
+  return null;
+}
+
+/**
+ * The pay cycle containing `today`: this payday through the day before the next.
+ *
+ * The cycle is a closed interval anchored on the payday rule rather than on
+ * "today", which is what lets the grid show the whole cycle instead of only the
+ * part of it that has not happened yet. A pay cycle normally runs 28-31 days,
+ * comfortably inside `MAX_RUNWAY_DAYS`.
+ *
+ * Returns null without a usable day of month, because the cycle length cannot be
+ * derived from a bare date and guessing one would invent a payday the user never
+ * set.
+ */
+export function payCycle(dayOfMonth, today = new Date()) {
+  const day = normaliseIncomeDay(dayOfMonth);
+  if (day === null) return null;
+  // The payday that opened the cycle is the most recent one on or before today.
+  const opening = previousStreamOccurrence(day, today);
+  if (!opening) return null;
+  const start = startOfDay(opening.date);
+  // The payday that closes it is the first one *strictly after* the opener.
+  // Searching from `today` instead would be wrong: when today is itself a
+  // payday, the next occurrence is today, the cycle would run backwards, and the
+  // whole view would collapse to nothing.
+  const afterOpening = new Date(start.getTime());
+  afterOpening.setDate(afterOpening.getDate() + 1);
+  const closing = nextStreamOccurrence(day, afterOpening);
+  if (!closing) return null;
+  const end = new Date(closing.date.getTime());
+  end.setDate(end.getDate() - 1);
+  if (end < start) return null;
+  return { start, end, dayCount: daysBetweenInclusive(start, end) };
 }
 
 function ordinal(day) {

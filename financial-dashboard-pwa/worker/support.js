@@ -5,7 +5,8 @@ export const SESSION_COOKIE = 'fh_session';
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 export const STORES = new Set([
   'settings', 'bills', 'commitments', 'netWorthEntries', 'netWorthHistory', 'holdings',
-  'portfolioHistory', 'pensions', 'pensionHistory', 'transactions', 'budgets', 'accounts', 'snapshots'
+  'portfolioHistory', 'pensions', 'pensionHistory', 'transactions', 'budgets', 'accounts',
+  'snapshots', 'balanceHistory'
 ]);
 const CLIENT_ONLY = new Set(['pending_sync', 'synced_at', '_deleted', 'table', 'owner_id', 'ownerID']);
 const MAX_RECORD_BYTES = 200_000;
