@@ -859,18 +859,21 @@ test('a backdated balance records history without moving the current balance', a
 
     const balanceInput = page.locator('.fh-form input[type="number"]');
     const dateInput = page.locator('.fh-form input[type="date"]');
+    const saveButton = page.locator('.fh-form button[type="submit"]');
+    // Nothing in the form writes on its own any more, so every entry is committed
+    // through the button. See the ordering regression test below for why.
+    const commit = async (date, amount) => {
+      await dateInput.fill(date);
+      await balanceInput.fill(String(amount));
+      await saveButton.click();
+      await page.waitForTimeout(600);
+    };
 
     // Record today's balance first, so there is a current figure to protect.
-    await dateInput.fill(days.today);
-    await balanceInput.fill('1758.04');
-    await balanceInput.blur();
-    await page.waitForTimeout(500);
+    await commit(days.today, 1758.04);
 
-    // Now backfill a past date. Only the amount edit may write anything.
-    await dateInput.fill(days.past);
-    await balanceInput.fill('4020');
-    await balanceInput.blur();
-    await page.waitForTimeout(700);
+    // Now backfill a past date. Only this commit should write anything.
+    await commit(days.past, 4020);
 
     // A future day is not selectable in the first place.
     assert.equal(await dateInput.getAttribute('max'), days.today, 'the date field must not offer a future day');
@@ -936,3 +939,140 @@ test('a backdated balance records history without moving the current balance', a
 });
 
 
+test('typing an amount before choosing its date writes nothing until the date is settled', async () => {
+  // The reported failure, in the exact order it was hit: today's balance was entered,
+  // then the payday figure was typed while the date field still said today. Because
+  // the amount committed on its own, the payday figure was written to *today* — both
+  // the stored balance and today's history record — and moving the date afterwards did
+  // nothing, so the value could not be recovered by fixing the date.
+  const { context, page, errors } = await openPage();
+  try {
+    await gotoApp(page, '#cashflow');
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    // A payday rule is what gives the grid a window; without one there is nothing to
+    // render and the grid assertions below would pass for the wrong reason.
+    await page.evaluate(async () => {
+      const open = () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('financial-health-local', 3);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const db = await open();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['settings'], 'readwrite');
+        const settings = tx.objectStore('settings');
+        settings.put({ id: 'balance', key: 'balance', value: 1758.04 });
+        settings.put({ id: 'balanceCurrency', key: 'balanceCurrency', value: 'GBP' });
+        settings.put({
+          id: 'incomeStreams',
+          key: 'incomeStreams',
+          value: [{ id: 's1', name: 'Salary', dayOfMonth: 15, isMain: true }]
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    });
+    await page.reload();
+    await page.waitForSelector('.fh-form', { timeout: 20_000 });
+
+    const days = await page.evaluate(() => {
+      const now = new Date();
+      const back = new Date(now.getTime() - 6 * 86400000);
+      const key = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      return { past: key(back), today: key(now) };
+    });
+
+    const readStores = () =>
+      page.evaluate(async () => {
+        const read = (store) =>
+          new Promise((resolve, reject) => {
+            const request = indexedDB.open('financial-health-local', 3);
+            request.onsuccess = () => {
+              const db = request.result;
+              const all = db.transaction(store, 'readonly').objectStore(store).getAll();
+              all.onsuccess = () => {
+                db.close();
+                resolve(all.result);
+              };
+              all.onerror = () => reject(all.error);
+            };
+            request.onerror = () => reject(request.error);
+          });
+        return { settings: await read('settings'), history: await read('balanceHistory') };
+      });
+
+    const balanceInput = page.locator('.fh-form input[type="number"]');
+    const dateInput = page.locator('.fh-form input[type="date"]');
+    const saveButton = page.locator('.fh-form button[type="submit"]');
+
+    // The reported order: type the payday amount while the date still says today.
+    await balanceInput.fill('4020');
+    await balanceInput.blur();
+    await page.waitForTimeout(500);
+
+    // Blurring the amount must not have written anything.
+    let stored = await readStores();
+    assert.equal(
+      Number(stored.settings.find((row) => row.key === 'balance')?.value),
+      1758.04,
+      'typing an amount must not save while the date still reads today'
+    );
+    assert.equal(stored.history.length, 0, `nothing should be recorded yet: ${JSON.stringify(stored.history)}`);
+
+    // The form admits it is holding something, so the edit is not silently lost.
+    assert.equal(
+      await page.locator('.fh-form .unsaved-marker').count(),
+      1,
+      'an unsaved draft should be marked'
+    );
+    assert.equal(await saveButton.isDisabled(), false, 'and the button should be offered');
+
+    // Now choose the payday. The button names the day it is about to write.
+    await dateInput.fill(days.past);
+    // Waited for rather than read straight away, so this asserts the rendered label
+    // and not the order in which two microtasks happened to settle.
+    await page.waitForFunction(
+      () => /Save balance for/.test(document.querySelector('.fh-form button[type="submit"]')?.textContent || ''),
+      undefined,
+      { timeout: 10_000 }
+    );
+    const label = (await saveButton.textContent()) || '';
+    assert.match(label, /Save balance for/, `the button should name the target day: "${label.trim()}"`);
+    const hint = (await page.locator('.fh-form > .hint').textContent()) || '';
+    assert.match(
+      hint,
+      /Records history for/i,
+      `the hint should explain that a past date does not move today's balance: "${hint.trim()}"`
+    );
+    assert.match(hint, /1,758\.04|1758\.04/, 'and state what today is staying at');
+
+    // Choosing the date must still not write: only the button commits.
+    stored = await readStores();
+    assert.equal(stored.history.length, 0, `choosing a date must not write: ${JSON.stringify(stored.history)}`);
+
+    // Committing puts the figure on the chosen day and leaves today alone.
+    await saveButton.click();
+    await page.waitForTimeout(700);
+    stored = await readStores();
+    assert.equal(
+      Number(stored.settings.find((row) => row.key === 'balance')?.value),
+      1758.04,
+      'a backfill must not change the current balance'
+    );
+    const byDate = new Map(stored.history.map((row) => [row.date, Number(row.amount)]));
+    assert.equal(byDate.get(days.past), 4020, 'the payday figure lands on the payday');
+    assert.equal(byDate.get(days.today), undefined, 'today is not given a second, competing figure');
+    assert.equal(stored.history.length, 1, `only the payday was recorded: ${JSON.stringify(stored.history)}`);
+
+    assert.deepEqual(errors, [], `console errors: ${JSON.stringify(errors)}`);
+  } catch (error) {
+    annotateFailure('Browser smoke: a typed amount was saved to the wrong day', error?.message || error);
+    throw error;
+  } finally {
+    await context.close();
+  }
+});

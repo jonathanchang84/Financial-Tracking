@@ -165,6 +165,18 @@ small { color: var(--muted); }
 .fh-metric h3 { font-size: 0.95rem; }
 
 .fh-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; align-items: end; }
+/* The balance form commits amount and date together, so the button and the hint are
+   each allowed to span the whole row. The button carries the date it will write, so it
+   is allowed to be wider than a single grid cell, and the hint reads as a caption
+   under the whole form rather than as a fourth field. */
+.fh-form > .fh-form-save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fh-form > .fh-form-save .primary-button { flex: 0 1 auto; }
+/* The marker states that the form differs from what is stored. It is deliberately a
+   dot with a word rather than colour alone, so it does not depend on distinguishing
+   two hues. */
+.fh-form .unsaved-marker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.78rem; }
+.fh-form .unsaved-marker::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--warn, #d9a441); }
+.fh-form > .hint { grid-column: 1 / -1; margin: 0; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); }
 label.compact { flex-direction: row; align-items: center; gap: 6px; }
 label.checkbox { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }

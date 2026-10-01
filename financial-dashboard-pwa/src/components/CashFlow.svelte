@@ -159,12 +159,19 @@
     const { balanceDate, ...settings } = next;
     const date = dayKey(balanceDate);
     const todayKey = dayKey(new Date());
-    if (date && date > todayKey) {
+    if (!date) {
+      // `dayKey('')` is `''`, which failed both date comparisons below and fell
+      // through to writing the scalar with no history record at all — a silent
+      // partial save. Refused rather than guessed at.
+      errorToast('Choose the date this balance was true');
+      throw new Error('missing balance date');
+    }
+    if (date > todayKey) {
       errorToast('Balance dates cannot be in the future');
       // Thrown so the form reports the rejection rather than claiming a save.
       throw new Error('future balance date');
     }
-    if (date && date < todayKey) {
+    if (date < todayKey) {
       // History only: `balance` is deliberately left out of the settings write, so
       // the stored current balance is untouched by a past backfill. The currency is
       // still saved — it describes the account, not the day.
