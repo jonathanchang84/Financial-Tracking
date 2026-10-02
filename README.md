@@ -2,6 +2,9 @@
 
 Native local-first financial tracking for iPhone, iPad, and Mac, plus an offline browser app (PWA). The Apple app uses SwiftUI with a shared domain layer, a locally persisted observable store, a Core Data model factory, and MVVM-oriented feature boundaries.
 
+- [`docs/AGENTS.md`](docs/AGENTS.md) — read before working here: what this repository is, how to build and deploy it, and the traps that have already cost time.
+- [`docs/BACKLOG.md`](docs/BACKLOG.md) — what we intend to build, why, what has been decided, and what is still open.
+
 ## Current Status
 
 ### Apple App (SwiftUI)
